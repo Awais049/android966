@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import {
   getDefaultProducts,
   getDefaultServices,
@@ -12,11 +13,29 @@ import {
 } from "@/lib/syncStore";
 import { supabase as realSupabase } from "@/integrations/supabase/client";
 
-const DB_DIR = path.resolve(process.cwd(), "src/data/server-db");
+// Global in-memory cache to persist across warm serverless requests
+const globalDb: Record<string, any[]> = ((globalThis as any).__A9_SERVER_DB__ =
+  (globalThis as any).__A9_SERVER_DB__ || {});
+
+const isServerless = Boolean(
+  process.env.VERCEL ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.NETLIFY,
+);
+
+// In serverless environments (e.g. Vercel), the project root is strictly read-only.
+// Use os.tmpdir() for safe writable disk cache while reading bundled files as fallback.
+const DB_DIR = isServerless
+  ? path.join(os.tmpdir(), "a9_server_db")
+  : path.resolve(process.cwd(), "src/data/server-db");
 
 function ensureDbDir() {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(DB_DIR)) {
+      fs.mkdirSync(DB_DIR, { recursive: true });
+    }
+  } catch (err) {
+    // Graceful fallback for strictly read-only environments
   }
 }
 
@@ -45,57 +64,140 @@ export function getInitialTableData(table: string): any[] {
   }
 }
 
-export function readServerTable(table: string): any[] {
-  ensureDbDir();
-  const filePath = path.join(DB_DIR, `${table}.json`);
+// ----------------------------------------------------
+// REMOTE CLOUD PERSISTENCE (Vercel KV / Upstash / Supabase)
+// ----------------------------------------------------
 
-  if (!fs.existsSync(filePath)) {
-    const initial = getInitialTableData(table);
-    try {
-      fs.writeFileSync(filePath, JSON.stringify(initial, null, 2), "utf-8");
-    } catch (err) {
-      console.warn(`[ServerDB] Failed to initialize ${table}.json:`, err);
-    }
-    return initial;
-  }
+function getKvConfig() {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (url && token) return { url, token };
+  return null;
+}
 
+async function fetchFromRemoteKv(table: string): Promise<any[] | null> {
+  const kv = getKvConfig();
+  if (!kv) return null;
   try {
-    const content = fs.readFileSync(filePath, "utf-8");
-    const parsed = JSON.parse(content);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      const essential = [
-        "products",
-        "services",
-        "blog_posts",
-        "videos",
-        "promo_banners",
-        "founder_content",
-        "site_settings",
-      ];
-      if (essential.includes(table)) {
-        const initial = getInitialTableData(table);
-        fs.writeFileSync(filePath, JSON.stringify(initial, null, 2), "utf-8");
-        return initial;
+    const res = await fetch(`${kv.url}/get/a9_table_${table}`, {
+      headers: { Authorization: `Bearer ${kv.token}` },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      const raw = json?.result;
+      if (raw) {
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
     }
-    return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
-    console.warn(`[ServerDB] Error reading ${filePath}:`, err);
-    const initial = getInitialTableData(table);
-    return initial;
+    console.warn(`[ServerDB] Error reading KV for ${table}:`, err);
+  }
+  return null;
+}
+
+async function saveToRemoteKv(table: string, items: any[]): Promise<void> {
+  const kv = getKvConfig();
+  if (!kv) return;
+  try {
+    await fetch(`${kv.url}/set/a9_table_${table}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${kv.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(items),
+    });
+  } catch (err) {
+    console.warn(`[ServerDB] Error writing KV for ${table}:`, err);
   }
 }
 
+function isSupabaseConfigured(): boolean {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+  return Boolean(
+    url &&
+      !url.includes("placeholder-project") &&
+      !url.includes("aklwdviwldimctxnbixp") &&
+      url.startsWith("https://"),
+  );
+}
+
+// ----------------------------------------------------
+// TABLE READ / WRITE
+// ----------------------------------------------------
+
+export function readServerTable(table: string): any[] {
+  // 1. Fast in-memory cache
+  if (globalDb[table] && Array.isArray(globalDb[table]) && globalDb[table].length > 0) {
+    return globalDb[table];
+  }
+
+  ensureDbDir();
+  const filePath = path.join(DB_DIR, `${table}.json`);
+
+  // 2. Read from disk if exists
+  if (fs.existsSync(filePath)) {
+    try {
+      const content = fs.readFileSync(filePath, "utf-8");
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        globalDb[table] = parsed;
+        return parsed;
+      }
+    } catch (err) {
+      console.warn(`[ServerDB] Error reading ${filePath}:`, err);
+    }
+  }
+
+  // 3. Check bundled seed file in process.cwd() if running locally or bundled
+  const bundledPath = path.resolve(process.cwd(), "src/data/server-db", `${table}.json`);
+  if (bundledPath !== filePath && fs.existsSync(bundledPath)) {
+    try {
+      const content = fs.readFileSync(bundledPath, "utf-8");
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        globalDb[table] = parsed;
+        return parsed;
+      }
+    } catch {}
+  }
+
+  // 4. Fallback to in-code seed generator
+  const initial = getInitialTableData(table);
+  globalDb[table] = initial;
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(initial, null, 2), "utf-8");
+  } catch {}
+  return initial;
+}
+
+export async function readServerTableAsync(table: string): Promise<any[]> {
+  // Check remote KV store first if available
+  const kvData = await fetchFromRemoteKv(table);
+  if (kvData && Array.isArray(kvData) && kvData.length > 0) {
+    globalDb[table] = kvData;
+    writeServerTable(table, kvData);
+    return kvData;
+  }
+  return readServerTable(table);
+}
+
 export function writeServerTable(table: string, items: any[]): void {
+  globalDb[table] = items;
   ensureDbDir();
   const filePath = path.join(DB_DIR, `${table}.json`);
   try {
     fs.writeFileSync(filePath, JSON.stringify(items, null, 2), "utf-8");
   } catch (err) {
-    console.error(`[ServerDB] Error writing ${filePath}:`, err);
-    throw err;
+    // Never crash on read-only serverless filesystems
+    console.warn(`[ServerDB] Notice: Local disk write failed (${table}):`, err);
   }
 }
+
+// ----------------------------------------------------
+// QUERY & MUTATION EXECUTION
+// ----------------------------------------------------
 
 export type QueryFilter = {
   column: string;
@@ -114,8 +216,45 @@ export type QueryParams = {
   countOnly?: boolean;
 };
 
-export function executeServerQuery(table: string, params: QueryParams = {}): { data: any; count?: number; error: null } {
-  let items = [...readServerTable(table)];
+export async function executeServerQuery(
+  table: string,
+  params: QueryParams = {},
+): Promise<{ data: any; count?: number; error: null }> {
+  // If a real external Supabase database is connected, query Supabase first
+  if (isSupabaseConfigured()) {
+    try {
+      const client = realSupabase as any;
+      if (client?.from) {
+        let q = client.from(table).select(params.selectCols || "*", {
+          count: params.countOnly ? "exact" : undefined,
+          head: params.countOnly ? true : false,
+        });
+        if (params.filters) {
+          for (const f of params.filters) {
+            if (f.op === "eq") q = q.eq(f.column, f.value);
+            if (f.op === "neq") q = q.neq(f.column, f.value);
+          }
+        }
+        if (params.orderField) {
+          q = q.order(params.orderField, { ascending: params.orderAsc ?? true });
+        }
+        if (params.limitCount) {
+          q = q.limit(params.limitCount);
+        }
+        const { data, error, count } = await q;
+        if (!error && (data != null || count != null)) {
+          if (params.isSingle || params.isMaybeSingle) {
+            return { data: Array.isArray(data) ? data[0] ?? null : data, count, error: null };
+          }
+          return { data, count, error: null };
+        }
+      }
+    } catch (err) {
+      console.warn(`[ServerDB] Supabase query fallback for ${table}:`, err);
+    }
+  }
+
+  let items = [...(await readServerTableAsync(table))];
 
   if (params.filters && params.filters.length > 0) {
     items = items.filter((item) => {
@@ -195,46 +334,50 @@ export type MutationParams = {
 
 export async function executeServerMutation(
   table: string,
-  params: MutationParams
+  params: MutationParams,
 ): Promise<{ data: any; error: string | null }> {
-  let items = [...readServerTable(table)];
+  let items = [...(await readServerTableAsync(table))];
 
-  // Background sync to remote Supabase if connected
-  try {
-    const client = realSupabase as any;
-    if (client?.from) {
-      if (params.action === "insert") {
-        Promise.resolve(client.from(table).insert(params.payload)).catch(() => {});
-      } else if (params.action === "upsert") {
-        Promise.resolve(client.from(table).upsert(params.payload, params.upsertOptions)).catch(() => {});
-      } else if (params.action === "update" && params.filters?.length) {
-        let q = client.from(table).update(params.payload);
-        for (const f of params.filters) {
-          if (f.op === "eq") q = q.eq(f.column, f.value);
+  // Sync to remote Supabase if connected
+  if (isSupabaseConfigured()) {
+    try {
+      const client = realSupabase as any;
+      if (client?.from) {
+        if (params.action === "insert") {
+          await client.from(table).insert(params.payload);
+        } else if (params.action === "upsert") {
+          await client.from(table).upsert(params.payload, params.upsertOptions);
+        } else if (params.action === "update" && params.filters?.length) {
+          let q = client.from(table).update(params.payload);
+          for (const f of params.filters) {
+            if (f.op === "eq") q = q.eq(f.column, f.value);
+          }
+          await q;
+        } else if (params.action === "delete" && params.filters?.length) {
+          let q = client.from(table).delete();
+          for (const f of params.filters) {
+            if (f.op === "eq") q = q.eq(f.column, f.value);
+          }
+          await q;
         }
-        Promise.resolve(q).catch(() => {});
-      } else if (params.action === "delete" && params.filters?.length) {
-        let q = client.from(table).delete();
-        for (const f of params.filters) {
-          if (f.op === "eq") q = q.eq(f.column, f.value);
-        }
-        Promise.resolve(q).catch(() => {});
       }
+    } catch (err) {
+      console.warn(`[ServerDB] Supabase mutation error on ${table}:`, err);
     }
-  } catch {
-    // Graceful background sync failure
   }
 
   if (params.action === "reset") {
     const initial = getInitialTableData(table);
     writeServerTable(table, initial);
+    await saveToRemoteKv(table, initial);
     return { data: initial, error: null };
   }
 
   if (params.action === "insert") {
     const records = Array.isArray(params.payload) ? params.payload : [params.payload];
     const inserted = records.map((r) => {
-      const id = r.id || r.slug || `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const id =
+        r.id || r.slug || `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       return {
         ...r,
         id,
@@ -244,6 +387,7 @@ export async function executeServerMutation(
     });
     items = [...inserted, ...items];
     writeServerTable(table, items);
+    await saveToRemoteKv(table, items);
     return { data: Array.isArray(params.payload) ? inserted : inserted[0], error: null };
   }
 
@@ -272,6 +416,7 @@ export async function executeServerMutation(
       return item;
     });
     writeServerTable(table, items);
+    await saveToRemoteKv(table, items);
     return { data: updated, error: null };
   }
 
@@ -290,6 +435,7 @@ export async function executeServerMutation(
       });
     });
     writeServerTable(table, items);
+    await saveToRemoteKv(table, items);
     return { data: null, error: null };
   }
 
@@ -312,6 +458,7 @@ export async function executeServerMutation(
       }
     }
     writeServerTable(table, items);
+    await saveToRemoteKv(table, items);
     return { data: params.payload, error: null };
   }
 
