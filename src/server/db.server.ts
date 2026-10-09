@@ -173,7 +173,11 @@ export function readServerTable(table: string): any[] {
 }
 
 export async function readServerTableAsync(table: string): Promise<any[]> {
-  // Check remote KV store first if available
+  // 1. Fast in-memory cache to guarantee instantaneous consistency across sequential mutations
+  if (globalDb[table] && Array.isArray(globalDb[table]) && globalDb[table].length > 0) {
+    return globalDb[table];
+  }
+  // 2. Check remote KV store first if available on cold start
   const kvData = await fetchFromRemoteKv(table);
   if (kvData && Array.isArray(kvData) && kvData.length > 0) {
     globalDb[table] = kvData;
@@ -254,7 +258,7 @@ export async function executeServerQuery(
     }
   }
 
-  let items = [...(await readServerTableAsync(table))];
+  let items: any[] = JSON.parse(JSON.stringify(await readServerTableAsync(table)));
 
   if (params.filters && params.filters.length > 0) {
     items = items.filter((item) => {
@@ -332,135 +336,207 @@ export type MutationParams = {
   upsertOptions?: { onConflict?: string };
 };
 
+// Sequential queue per table to prevent concurrent read-modify-write race conditions
+const tableMutexMap = new Map<string, Promise<any>>();
+
+function runWithTableLock<T>(table: string, task: () => Promise<T>): Promise<T> {
+  const current = tableMutexMap.get(table) || Promise.resolve();
+  const next = current.catch(() => {}).then(task);
+  tableMutexMap.set(table, next);
+  return next;
+}
+
 export async function executeServerMutation(
   table: string,
   params: MutationParams,
 ): Promise<{ data: any; error: string | null }> {
-  let items = [...(await readServerTableAsync(table))];
+  return runWithTableLock(table, async () => {
+    // Read current state and deep clone to prevent object reference leakage
+    const rawItems = await readServerTableAsync(table);
+    let items: any[] = JSON.parse(JSON.stringify(rawItems || []));
 
-  // Sync to remote Supabase if connected
-  if (isSupabaseConfigured()) {
-    try {
-      const client = realSupabase as any;
-      if (client?.from) {
-        if (params.action === "insert") {
-          await client.from(table).insert(params.payload);
-        } else if (params.action === "upsert") {
-          await client.from(table).upsert(params.payload, params.upsertOptions);
-        } else if (params.action === "update" && params.filters?.length) {
-          let q = client.from(table).update(params.payload);
-          for (const f of params.filters) {
-            if (f.op === "eq") q = q.eq(f.column, f.value);
-          }
-          await q;
-        } else if (params.action === "delete" && params.filters?.length) {
-          let q = client.from(table).delete();
-          for (const f of params.filters) {
-            if (f.op === "eq") q = q.eq(f.column, f.value);
-          }
-          await q;
-        }
-      }
-    } catch (err) {
-      console.warn(`[ServerDB] Supabase mutation error on ${table}:`, err);
-    }
-  }
-
-  if (params.action === "reset") {
-    const initial = getInitialTableData(table);
-    writeServerTable(table, initial);
-    await saveToRemoteKv(table, initial);
-    return { data: initial, error: null };
-  }
-
-  if (params.action === "insert") {
-    const records = Array.isArray(params.payload) ? params.payload : [params.payload];
-    const inserted = records.map((r) => {
-      const id =
-        r.id || r.slug || `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      return {
-        ...r,
-        id,
-        created_at: r.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-    });
-    items = [...inserted, ...items];
-    writeServerTable(table, items);
-    await saveToRemoteKv(table, items);
-    return { data: Array.isArray(params.payload) ? inserted : inserted[0], error: null };
-  }
-
-  if (params.action === "update") {
-    const payload = params.payload;
-    const updated: any[] = [];
-    const filters = params.filters ?? [];
-    items = items.map((item) => {
-      const matches =
-        filters.length === 0 ||
-        filters.every((f) => {
-          const val = item[f.column];
-          if (f.op === "eq") {
-            if (val === undefined && f.column === "id" && item.slug !== undefined) {
-              return String(item.slug) === String(f.value);
+    // Sync to remote Supabase if connected
+    if (isSupabaseConfigured()) {
+      try {
+        const client = realSupabase as any;
+        if (client?.from) {
+          if (params.action === "insert") {
+            await client.from(table).insert(params.payload);
+          } else if (params.action === "upsert") {
+            await client.from(table).upsert(params.payload, params.upsertOptions);
+          } else if (params.action === "update" && params.filters?.length) {
+            let q = client.from(table).update(params.payload);
+            for (const f of params.filters) {
+              if (f.op === "eq") q = q.eq(f.column, f.value);
             }
+            await q;
+          } else if (params.action === "delete" && params.filters?.length) {
+            let q = client.from(table).delete();
+            for (const f of params.filters) {
+              if (f.op === "eq") q = q.eq(f.column, f.value);
+            }
+            await q;
+          }
+        }
+      } catch (err) {
+        console.warn(`[ServerDB] Supabase mutation error on ${table}:`, err);
+      }
+    }
+
+    if (params.action === "reset") {
+      const initial = getInitialTableData(table);
+      const clonedInitial = JSON.parse(JSON.stringify(initial));
+      writeServerTable(table, clonedInitial);
+      await saveToRemoteKv(table, clonedInitial);
+      return { data: clonedInitial, error: null };
+    }
+
+    if (params.action === "insert") {
+      const rawRecords = Array.isArray(params.payload) ? params.payload : [params.payload];
+      const records = JSON.parse(JSON.stringify(rawRecords));
+      const inserted = records.map((r: any) => {
+        const id =
+          r.id || r.slug || `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        return {
+          ...r,
+          id,
+          created_at: r.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      });
+      items = [...inserted, ...items];
+      writeServerTable(table, items);
+      await saveToRemoteKv(table, items);
+      return { data: Array.isArray(params.payload) ? inserted : inserted[0], error: null };
+    }
+
+    if (params.action === "update") {
+      const payload = JSON.parse(JSON.stringify(params.payload || {}));
+      const filters = params.filters ?? [];
+      const updated: any[] = [];
+
+      // Extract specific target ID or slug filter if present
+      const idFilter = filters.find((f) => f.column === "id");
+      const slugFilter = filters.find((f) => f.column === "slug");
+      const targetId = idFilter != null ? String(idFilter.value) : null;
+      const targetSlug = slugFilter != null ? String(slugFilter.value) : null;
+
+      items = items.map((rawItem) => {
+        if (!rawItem) return rawItem;
+        const item = JSON.parse(JSON.stringify(rawItem));
+        const itemId = String(item.id ?? "");
+        const itemSlug = String(item.slug ?? "");
+
+        let isMatch = false;
+        if (targetId != null) {
+          isMatch = itemId === targetId || itemSlug === targetId;
+        } else if (targetSlug != null) {
+          isMatch = itemSlug === targetSlug || itemId === targetSlug;
+        } else {
+          isMatch =
+            filters.length === 0 ||
+            filters.every((f) => {
+              const val = item[f.column];
+              if (f.op === "eq") {
+                if (val === undefined && f.column === "id" && item.slug !== undefined) {
+                  return String(item.slug) === String(f.value);
+                }
+                return String(val) === String(f.value);
+              }
+              if (f.op === "neq") {
+                if (val === undefined && f.column === "id" && item.slug !== undefined) {
+                  return String(item.slug) !== String(f.value);
+                }
+                return String(val) !== String(f.value);
+              }
+              return true;
+            });
+        }
+
+        if (isMatch) {
+          const next = {
+            ...item,
+            ...payload,
+            id: payload.id !== undefined && payload.id !== "" ? payload.id : item.id,
+            slug: payload.slug !== undefined && payload.slug !== "" ? payload.slug : item.slug,
+            updated_at: new Date().toISOString(),
+          };
+          const clonedNext = JSON.parse(JSON.stringify(next));
+          updated.push(clonedNext);
+          return clonedNext;
+        }
+
+        return item;
+      });
+
+      writeServerTable(table, items);
+      await saveToRemoteKv(table, items);
+      return { data: JSON.parse(JSON.stringify(updated)), error: null };
+    }
+
+    if (params.action === "delete") {
+      const filters = params.filters ?? [];
+      const idFilter = filters.find((f) => f.column === "id");
+      const slugFilter = filters.find((f) => f.column === "slug");
+      const targetId = idFilter != null ? String(idFilter.value) : null;
+      const targetSlug = slugFilter != null ? String(slugFilter.value) : null;
+
+      items = items.filter((rawItem) => {
+        if (!rawItem) return false;
+        const itemId = String(rawItem.id ?? "");
+        const itemSlug = String(rawItem.slug ?? "");
+
+        if (targetId != null) {
+          return itemId !== targetId && itemSlug !== targetId;
+        }
+        if (targetSlug != null) {
+          return itemSlug !== targetSlug && itemId !== targetSlug;
+        }
+
+        return !filters.every((f) => {
+          const val = rawItem[f.column];
+          if (f.op === "eq") {
             return String(val) === String(f.value);
           }
           return true;
         });
-      if (matches) {
-        const next = { ...item, ...payload, updated_at: new Date().toISOString() };
-        updated.push(next);
-        return next;
-      }
-      return item;
-    });
-    writeServerTable(table, items);
-    await saveToRemoteKv(table, items);
-    return { data: updated, error: null };
-  }
-
-  if (params.action === "delete") {
-    const filters = params.filters ?? [];
-    items = items.filter((item) => {
-      return !filters.every((f) => {
-        const val = item[f.column];
-        if (f.op === "eq") {
-          if (val === undefined && f.column === "id" && item.slug !== undefined) {
-            return String(item.slug) === String(f.value);
-          }
-          return String(val) === String(f.value);
-        }
-        return true;
       });
-    });
-    writeServerTable(table, items);
-    await saveToRemoteKv(table, items);
-    return { data: null, error: null };
-  }
 
-  if (params.action === "upsert") {
-    const records = Array.isArray(params.payload) ? params.payload : [params.payload];
-    const conflictKey = params.upsertOptions?.onConflict || "id";
-    for (const rec of records) {
-      const matchVal = rec[conflictKey] || rec.id || rec.slug;
-      const idx = items.findIndex((it) => (it[conflictKey] || it.id || it.slug) === matchVal);
-      const itemToSave = {
-        ...rec,
-        id: rec.id || (idx >= 0 ? items[idx].id : rec.slug || `rec_${Date.now()}`),
-        updated_at: new Date().toISOString(),
-        created_at: idx >= 0 ? items[idx].created_at : rec.created_at || new Date().toISOString(),
-      };
-      if (idx >= 0) {
-        items[idx] = { ...items[idx], ...itemToSave };
-      } else {
-        items.push(itemToSave);
-      }
+      writeServerTable(table, items);
+      await saveToRemoteKv(table, items);
+      return { data: null, error: null };
     }
-    writeServerTable(table, items);
-    await saveToRemoteKv(table, items);
-    return { data: params.payload, error: null };
-  }
 
-  return { data: null, error: "Unknown action" };
+    if (params.action === "upsert") {
+      const rawRecords = Array.isArray(params.payload) ? params.payload : [params.payload];
+      const records = JSON.parse(JSON.stringify(rawRecords));
+      const conflictKey = params.upsertOptions?.onConflict || "id";
+
+      for (const rec of records) {
+        const matchVal = String(rec[conflictKey] || rec.id || rec.slug || "");
+        const idx = items.findIndex((it) => {
+          const itVal = String(it[conflictKey] || it.id || it.slug || "");
+          return itVal === matchVal;
+        });
+        const itemToSave = {
+          ...rec,
+          id: rec.id || (idx >= 0 ? items[idx].id : rec.slug || `rec_${Date.now()}`),
+          updated_at: new Date().toISOString(),
+          created_at:
+            idx >= 0 ? items[idx].created_at : rec.created_at || new Date().toISOString(),
+        };
+        if (idx >= 0) {
+          items[idx] = { ...items[idx], ...itemToSave };
+        } else {
+          items.push(itemToSave);
+        }
+      }
+
+      writeServerTable(table, items);
+      await saveToRemoteKv(table, items);
+      return { data: params.payload, error: null };
+    }
+
+    return { data: null, error: "Unknown action" };
+  });
 }

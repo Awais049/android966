@@ -268,11 +268,13 @@ function RootComponent() {
     (window as any).__A9_QUERY_CLIENT__ = queryClient;
 
     const handleDbChange = (e: any) => {
-      const table = e?.detail?.table;
-      if (table) {
-        invalidateQueriesForTable(queryClient, table);
-      } else {
-        queryClient.invalidateQueries();
+      if (e?.detail?.remote === true) {
+        const table = e?.detail?.table;
+        if (table) {
+          invalidateQueriesForTable(queryClient, table);
+        } else {
+          queryClient.invalidateQueries();
+        }
       }
     };
 

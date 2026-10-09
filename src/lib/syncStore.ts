@@ -464,7 +464,7 @@ export function setStoredTable<T = any>(table: string, items: T[]): void {
 }
 
 export const TABLE_QUERY_KEYS: Record<string, string[][]> = {
-  products: [["admin", "products"], ["public", "products"], ["admin", "dashboard"]],
+  products: [["admin", "products"], ["public", "products"], ["products"], ["admin", "dashboard"]],
   blog_posts: [["admin", "blog"], ["public", "blog"], ["admin", "dashboard"]],
   services: [["admin", "services"], ["public", "services"]],
   videos: [["admin", "videos"], ["public", "videos"], ["admin", "dashboard"]],
@@ -498,20 +498,16 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
         if (globalQc) {
           invalidateQueriesForTable(globalQc, event.data.table);
         }
-        window.dispatchEvent(new CustomEvent("a9_db_change", { detail: { table: event.data.table, remote: true } }));
+        window.dispatchEvent(
+          new CustomEvent("a9_db_change", { detail: { table: event.data.table, remote: true } }),
+        );
       }
     };
   } catch {}
 }
 
-export function notifyDataChanged(table: string): void {
+export function notifyRemoteTabsChanged(table: string): void {
   if (typeof window === "undefined") return;
-
-  // Local window event
-  try {
-    window.dispatchEvent(new CustomEvent("a9_db_change", { detail: { table } }));
-    window.dispatchEvent(new Event("storage"));
-  } catch {}
 
   // Cross-tab broadcast
   if (syncBroadcastChannel) {
@@ -520,16 +516,21 @@ export function notifyDataChanged(table: string): void {
     } catch {}
   }
 
-  // Cross-tab localStorage fallback
+  // Cross-tab localStorage fallback (fires in other browser tabs)
   try {
     localStorage.setItem("a9_last_mutation", JSON.stringify({ table, timestamp: Date.now() }));
   } catch {}
+}
 
-  // Direct invalidation if global QueryClient is registered
-  const globalQc = (window as any).__A9_QUERY_CLIENT__;
-  if (globalQc) {
-    invalidateQueriesForTable(globalQc, table);
-  }
+export function notifyDataChanged(table: string): void {
+  if (typeof window === "undefined") return;
+
+  notifyRemoteTabsChanged(table);
+
+  // Local window event for listeners explicitly handling local changes
+  try {
+    window.dispatchEvent(new CustomEvent("a9_db_change", { detail: { table, remote: false } }));
+  } catch {}
 }
 
 export async function resetAllDefaults(): Promise<void> {
@@ -788,19 +789,36 @@ export class SyncQueryBuilder<T = any> {
         if (res.ok) {
           const json = await res.json().catch(() => null);
           if (json && json.error == null) {
-            // Refresh table from server to maintain perfect consistency
-            try {
-              const fullRes = await fetch(`/api/data?table=${encodeURIComponent(this.table)}`);
-              if (fullRes.ok) {
-                const fullJson = await fullRes.json();
-                if (Array.isArray(fullJson?.data)) {
-                  updateLocalTableCache(this.table, fullJson.data);
-                }
-              }
-            } catch {}
+            // Merge mutation result directly into local cache without a premature full-table re-fetch
+            if (this.mutationType === "insert" && json.data) {
+              const current = getStoredTable(this.table);
+              const inserted = Array.isArray(json.data) ? json.data : [json.data];
+              const merged = [
+                ...inserted,
+                ...current.filter(
+                  (c: any) =>
+                    !inserted.some(
+                      (ins: any) =>
+                        (ins.id && ins.id === c.id) || (ins.slug && ins.slug === c.slug),
+                    ),
+                ),
+              ];
+              updateLocalTableCache(this.table, merged);
+            } else if (this.mutationType === "update" && json.data) {
+              const current = getStoredTable(this.table);
+              const updatedList = Array.isArray(json.data) ? json.data : [json.data];
+              const updatedMap = new Map(
+                updatedList.map((u: any) => [String(u.id ?? u.slug), u]),
+              );
+              const merged = current.map((item: any) => {
+                const key = String(item.id ?? item.slug);
+                return updatedMap.has(key) ? { ...item, ...updatedMap.get(key) } : item;
+              });
+              updateLocalTableCache(this.table, merged);
+            }
 
-            // Broadcast change to invalidate queries across all open views
-            notifyDataChanged(this.table);
+            // Broadcast change only to other open tabs/windows
+            notifyRemoteTabsChanged(this.table);
             return { data: json.data !== undefined ? json.data : localResult.data, error: null };
           } else {
             console.warn(`[SyncStore] Server mutation error on ${this.table}:`, json?.error);
@@ -809,9 +827,6 @@ export class SyncQueryBuilder<T = any> {
       } catch (networkErr) {
         console.warn(`[SyncStore] Network error during mutation on ${this.table}:`, networkErr);
       }
-
-      // Even on network error, notify local views
-      notifyDataChanged(this.table);
     }
 
     return localResult;

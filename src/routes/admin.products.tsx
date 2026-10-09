@@ -51,10 +51,12 @@ function AdminProducts() {
   });
 
   const save = useMutation({
+    mutationKey: ["products", "save"],
     mutationFn: async (row: Partial<ProductRow>) => {
-      const payload = { ...row };
+      const payload = JSON.parse(JSON.stringify(row));
       if (payload.id) {
-        const { error } = await sb.from("products").update(payload).eq("id", payload.id);
+        const targetId = String(payload.id);
+        const { error } = await sb.from("products").update(payload).eq("id", targetId);
         if (error) throw error;
       } else {
         const { error } = await sb.from("products").insert(payload);
@@ -62,36 +64,149 @@ function AdminProducts() {
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "products"] });
-      qc.invalidateQueries({ queryKey: ["public", "products"] });
-      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
       setEditing(null);
+    },
+    onSettled: async () => {
+      await qc.invalidateQueries({ queryKey: ["admin", "products"] });
+      await qc.invalidateQueries({ queryKey: ["public", "products"] });
+      await qc.invalidateQueries({ queryKey: ["products"] });
+      await qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
     },
   });
 
   const del = useMutation({
+    mutationKey: ["products", "delete"],
     mutationFn: async (id: string) => {
-      const { error } = await sb.from("products").delete().eq("id", id);
+      const targetId = String(id);
+      const { error } = await sb.from("products").delete().eq("id", targetId);
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "products"] });
-      qc.invalidateQueries({ queryKey: ["public", "products"] });
-      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+    onMutate: async (id: string) => {
+      const targetId = String(id);
+      await qc.cancelQueries({ queryKey: ["admin", "products"] });
+      await qc.cancelQueries({ queryKey: ["public", "products"] });
+      await qc.cancelQueries({ queryKey: ["products"] });
+
+      const prevAdmin = qc.getQueryData<ProductRow[]>(["admin", "products"]);
+      const prevPublic = qc.getQueryData<any[]>(["public", "products"]);
+      const prevProducts = qc.getQueryData<any[]>(["products"]);
+
+      qc.setQueryData<ProductRow[]>(["admin", "products"], (old) =>
+        old ? old.filter((p) => String(p.id) !== targetId && String(p.slug) !== targetId) : old,
+      );
+      qc.setQueryData<any[]>(["public", "products"], (old) =>
+        old ? old.filter((p) => String(p.id) !== targetId && String(p.slug) !== targetId) : old,
+      );
+      qc.setQueryData<any[]>(["products"], (old) =>
+        old ? old.filter((p) => String(p.id) !== targetId && String(p.slug) !== targetId) : old,
+      );
+
+      return { prevAdmin, prevPublic, prevProducts };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.prevAdmin) qc.setQueryData(["admin", "products"], context.prevAdmin);
+      if (context?.prevPublic) qc.setQueryData(["public", "products"], context.prevPublic);
+      if (context?.prevProducts) qc.setQueryData(["products"], context.prevProducts);
+    },
+    onSettled: async () => {
+      await qc.invalidateQueries({ queryKey: ["admin", "products"] });
+      await qc.invalidateQueries({ queryKey: ["public", "products"] });
+      await qc.invalidateQueries({ queryKey: ["products"] });
+      await qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
     },
   });
 
   const toggleStock = useMutation({
+    mutationKey: ["products", "stock"],
     mutationFn: async (row: ProductRow) => {
+      const targetId = String(row.id || row.slug);
+      const nextStock = !row.in_stock;
+
       const { error } = await sb
         .from("products")
-        .update({ in_stock: !row.in_stock })
-        .eq("id", row.id);
+        .update({ in_stock: nextStock })
+        .eq("id", targetId);
       if (error) throw error;
+      return { id: targetId, nextStock };
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["admin", "products"] });
-      qc.invalidateQueries({ queryKey: ["public", "products"] });
+    onMutate: async (row: ProductRow) => {
+      const targetId = String(row.id || row.slug);
+      const nextStock = !row.in_stock;
+
+      // Cancel outgoing queries to prevent overwriting optimistic UI
+      await qc.cancelQueries({ queryKey: ["admin", "products"] });
+      await qc.cancelQueries({ queryKey: ["public", "products"] });
+      await qc.cancelQueries({ queryKey: ["products"] });
+
+      // Snapshot previous states for rollback
+      const prevAdmin = qc.getQueryData<ProductRow[]>(["admin", "products"]);
+      const prevPublic = qc.getQueryData<any[]>(["public", "products"]);
+      const prevProducts = qc.getQueryData<any[]>(["products"]);
+
+      // Immediately reflect stock change across admin and public caches
+      if (prevAdmin) {
+        qc.setQueryData<ProductRow[]>(["admin", "products"], (old) => {
+          if (!old) return old;
+          return old.map((p) => {
+            const pId = String(p.id ?? "");
+            const pSlug = String(p.slug ?? "");
+            if (pId === targetId || pSlug === targetId) {
+              return { ...p, in_stock: nextStock };
+            }
+            return p;
+          });
+        });
+      }
+
+      if (prevPublic) {
+        qc.setQueryData<any[]>(["public", "products"], (old) => {
+          if (!old) return old;
+          return old.map((p) => {
+            const pId = String(p.id ?? "");
+            const pSlug = String(p.slug ?? "");
+            if (pId === targetId || pSlug === targetId) {
+              return { ...p, in_stock: nextStock };
+            }
+            return p;
+          });
+        });
+      }
+
+      if (prevProducts) {
+        qc.setQueryData<any[]>(["products"], (old) => {
+          if (!old) return old;
+          return old.map((p) => {
+            const pId = String(p.id ?? "");
+            const pSlug = String(p.slug ?? "");
+            if (pId === targetId || pSlug === targetId) {
+              return { ...p, in_stock: nextStock };
+            }
+            return p;
+          });
+        });
+      }
+
+      return { prevAdmin, prevPublic, prevProducts };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.prevAdmin) {
+        qc.setQueryData(["admin", "products"], context.prevAdmin);
+      }
+      if (context?.prevPublic) {
+        qc.setQueryData(["public", "products"], context.prevPublic);
+      }
+      if (context?.prevProducts) {
+        qc.setQueryData(["products"], context.prevProducts);
+      }
+    },
+    onSettled: async () => {
+      // Invalidate strictly after promise settles. If another stock toggle is in flight, let the last one trigger it.
+      if (qc.isMutating({ mutationKey: ["products", "stock"] }) <= 1) {
+        await qc.invalidateQueries({ queryKey: ["admin", "products"] });
+        await qc.invalidateQueries({ queryKey: ["public", "products"] });
+        await qc.invalidateQueries({ queryKey: ["products"] });
+        await qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+      }
     },
   });
 
