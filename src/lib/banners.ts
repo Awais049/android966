@@ -111,7 +111,8 @@ export function usePromoBanners() {
         return [];
       }
     },
-    staleTime: 30_000,
+    staleTime: 5000,
+    refetchOnMount: true,
     retry: false,
   });
 

@@ -26,6 +26,7 @@ import { applyTheme } from "@/lib/themes";
 import { PwaProvider } from "@/context/PwaContext";
 import { PwaInstallPopup } from "@/components/PwaInstallPopup";
 import { getOrganizationSchema, getWebSiteSchema } from "@/lib/seo";
+import { invalidateQueriesForTable } from "@/lib/syncStore";
 
 function NotFoundComponent() {
   return (
@@ -241,7 +242,7 @@ function QueryProviders({
   return (
     <PersistQueryClientProvider
       client={queryClient}
-      persistOptions={{ persister, maxAge: 1000 * 60 * 60 * 24, buster: "v1" }}
+      persistOptions={{ persister, maxAge: 1000 * 60 * 60 * 24, buster: "v2" }}
     >
       {children}
     </PersistQueryClientProvider>
@@ -261,6 +262,25 @@ function RootComponent() {
   const location = useLocation();
   const isAdmin = location.pathname.startsWith("/admin");
   const isBareAuth = location.pathname === "/signin";
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    (window as any).__A9_QUERY_CLIENT__ = queryClient;
+
+    const handleDbChange = (e: any) => {
+      const table = e?.detail?.table;
+      if (table) {
+        invalidateQueriesForTable(queryClient, table);
+      } else {
+        queryClient.invalidateQueries();
+      }
+    };
+
+    window.addEventListener("a9_db_change", handleDbChange);
+    return () => {
+      window.removeEventListener("a9_db_change", handleDbChange);
+    };
+  }, [queryClient]);
 
   return (
     <QueryProviders queryClient={queryClient}>

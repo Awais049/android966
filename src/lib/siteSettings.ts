@@ -120,8 +120,9 @@ export function useSiteSettings(): SiteSettings {
         return sync;
       }
     },
-    initialData: () => sync,
-    staleTime: 60_000,
+    placeholderData: () => sync,
+    staleTime: 5000,
+    refetchOnMount: true,
     retry: false,
   });
 

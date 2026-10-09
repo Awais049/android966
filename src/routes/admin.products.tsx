@@ -63,6 +63,8 @@ function AdminProducts() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "products"] });
+      qc.invalidateQueries({ queryKey: ["public", "products"] });
+      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
       setEditing(null);
     },
   });
@@ -72,7 +74,11 @@ function AdminProducts() {
       const { error } = await sb.from("products").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "products"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "products"] });
+      qc.invalidateQueries({ queryKey: ["public", "products"] });
+      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+    },
   });
 
   const toggleStock = useMutation({

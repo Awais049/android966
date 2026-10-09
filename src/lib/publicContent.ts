@@ -59,10 +59,12 @@ export function useMergedProducts() {
         if (error) throw error;
         return (data ?? []) as ProductRow[];
       } catch (err) {
-        console.warn("[Products] Supabase connection unavailable, using local mock data:", err);
+        console.warn("[Products] Database connection unavailable, using local mock data:", err);
         return [];
       }
     },
+    staleTime: 5000,
+    refetchOnMount: true,
     retry: false,
   });
   const dbProducts = dbRows.map(rowToProduct);
@@ -123,16 +125,16 @@ export function useMergedBlogPosts() {
         if (error) throw error;
         return (data ?? []) as BlogRow[];
       } catch (err) {
-        console.warn("[Blog] Supabase connection unavailable, using local mock data:", err);
+        console.warn("[Blog] Database connection unavailable, using local mock data:", err);
         return [];
       }
     },
+    staleTime: 5000,
+    refetchOnMount: true,
     retry: false,
   });
   const dbPosts = dbRows.map(rowToBlogPost);
-  const dbSlugs = new Set(dbPosts.map((p) => p.id));
-  const fallbackUnique = mockBlogPosts.filter((m) => !dbSlugs.has(m.id));
-  const merged = [...dbPosts, ...fallbackUnique];
+  const merged = dbPosts.length > 0 ? dbPosts : mockBlogPosts;
   return { posts: merged, isLoading };
 }
 
@@ -175,10 +177,12 @@ export function useMergedServices() {
         if (error) throw error;
         return (data ?? []) as ServiceRow[];
       } catch (err) {
-        console.warn("[Services] Supabase connection unavailable, using local mock data:", err);
+        console.warn("[Services] Database connection unavailable, using local mock data:", err);
         return [];
       }
     },
+    staleTime: 5000,
+    refetchOnMount: true,
     retry: false,
   });
   const dbServices = dbRows.map(rowToService);

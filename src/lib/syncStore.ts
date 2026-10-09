@@ -431,7 +431,7 @@ export function getStoredTable<T = any>(table: string): T[] {
   }
 }
 
-export function setStoredTable<T = any>(table: string, items: T[]): void {
+export function updateLocalTableCache<T = any>(table: string, items: T[]): void {
   inMemoryStore[table] = items;
   if (typeof window !== "undefined") {
     try {
@@ -450,15 +450,89 @@ export function setStoredTable<T = any>(table: string, items: T[]): void {
           window.dispatchEvent(new CustomEvent("a9_logo_change", { detail: logo }));
         }
       }
-      window.dispatchEvent(new CustomEvent("a9_db_change", { detail: { table } }));
-      window.dispatchEvent(new Event("storage"));
     } catch (err) {
-      console.warn(`[SyncStore] Error saving ${table}:`, err);
+      console.warn(`[SyncStore] Error writing cache for ${table}:`, err);
     }
   }
 }
 
-export function resetAllDefaults(): void {
+export function setStoredTable<T = any>(table: string, items: T[]): void {
+  updateLocalTableCache(table, items);
+  if (typeof window !== "undefined") {
+    notifyDataChanged(table);
+  }
+}
+
+export const TABLE_QUERY_KEYS: Record<string, string[][]> = {
+  products: [["admin", "products"], ["public", "products"], ["admin", "dashboard"]],
+  blog_posts: [["admin", "blog"], ["public", "blog"], ["admin", "dashboard"]],
+  services: [["admin", "services"], ["public", "services"]],
+  videos: [["admin", "videos"], ["public", "videos"], ["admin", "dashboard"]],
+  promo_banners: [["admin", "banners"], ["public", "banners"]],
+  orders: [["admin", "orders"], ["orders"], ["admin", "dashboard"]],
+  founder_content: [["admin", "founder"], ["site", "founder"]],
+  site_settings: [["admin", "settings"], ["site", "settings"]],
+};
+
+export function invalidateQueriesForTable(qc: any, table: string): void {
+  if (!qc || typeof qc.invalidateQueries !== "function") return;
+  if (table === "all") {
+    qc.invalidateQueries();
+    return;
+  }
+  const keys = TABLE_QUERY_KEYS[table] || [[table]];
+  for (const key of keys) {
+    try {
+      qc.invalidateQueries({ queryKey: key });
+    } catch {}
+  }
+}
+
+let syncBroadcastChannel: BroadcastChannel | null = null;
+if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
+  try {
+    syncBroadcastChannel = new BroadcastChannel("a9_db_channel");
+    syncBroadcastChannel.onmessage = (event) => {
+      if (event.data?.type === "db_change" && event.data?.table) {
+        const globalQc = (window as any).__A9_QUERY_CLIENT__;
+        if (globalQc) {
+          invalidateQueriesForTable(globalQc, event.data.table);
+        }
+        window.dispatchEvent(new CustomEvent("a9_db_change", { detail: { table: event.data.table, remote: true } }));
+      }
+    };
+  } catch {}
+}
+
+export function notifyDataChanged(table: string): void {
+  if (typeof window === "undefined") return;
+
+  // Local window event
+  try {
+    window.dispatchEvent(new CustomEvent("a9_db_change", { detail: { table } }));
+    window.dispatchEvent(new Event("storage"));
+  } catch {}
+
+  // Cross-tab broadcast
+  if (syncBroadcastChannel) {
+    try {
+      syncBroadcastChannel.postMessage({ type: "db_change", table, timestamp: Date.now() });
+    } catch {}
+  }
+
+  // Cross-tab localStorage fallback
+  try {
+    localStorage.setItem("a9_last_mutation", JSON.stringify({ table, timestamp: Date.now() }));
+  } catch {}
+
+  // Direct invalidation if global QueryClient is registered
+  const globalQc = (window as any).__A9_QUERY_CLIENT__;
+  if (globalQc) {
+    invalidateQueriesForTable(globalQc, table);
+  }
+}
+
+export async function resetAllDefaults(): Promise<void> {
   const tables = [
     "products",
     "services",
@@ -472,11 +546,21 @@ export function resetAllDefaults(): void {
   for (const table of tables) {
     const initial = getInitialData(table);
     setStoredTable(table, initial);
+    if (typeof window !== "undefined") {
+      try {
+        await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ table, action: "reset" }),
+        });
+      } catch {}
+    }
   }
+  notifyDataChanged("all");
 }
 
 // ----------------------------------------------------
-// QUERY BUILDER COMPATIBLE WITH SUPABASE
+// QUERY BUILDER COMPATIBLE WITH SUPABASE & BACKEND DATABASE
 // ----------------------------------------------------
 
 export class SyncQueryBuilder<T = any> {
@@ -484,6 +568,7 @@ export class SyncQueryBuilder<T = any> {
   private selectCols: string = "*";
   private selectOptions?: { count?: "exact" | "planned" | "estimated"; head?: boolean };
   private filters: Array<(item: any) => boolean> = [];
+  private rawFilters: Array<{ column: string; op: "eq" | "neq"; value: any }> = [];
   private orderField?: string;
   private orderAsc: boolean = true;
   private limitCount?: number;
@@ -509,10 +594,10 @@ export class SyncQueryBuilder<T = any> {
   }
 
   eq(column: string, value: any) {
+    this.rawFilters.push({ column, op: "eq", value });
     this.filters.push((item) => {
       if (item == null) return false;
       const v = item[column];
-      // If querying by id and item doesn't have id but has slug
       if (v === undefined && column === "id" && item.slug !== undefined) {
         return String(item.slug) === String(value);
       }
@@ -522,6 +607,7 @@ export class SyncQueryBuilder<T = any> {
   }
 
   neq(column: string, value: any) {
+    this.rawFilters.push({ column, op: "neq", value });
     this.filters.push((item) => {
       if (item == null) return true;
       const v = item[column];
@@ -534,7 +620,6 @@ export class SyncQueryBuilder<T = any> {
   }
 
   or(filterExpr: string) {
-    // Supports syntax like "user_id.eq.val,email.eq.val"
     const clauses = filterExpr.split(",").map((s) => s.trim());
     this.filters.push((item) => {
       if (item == null) return false;
@@ -628,7 +713,7 @@ export class SyncQueryBuilder<T = any> {
         };
       });
       items = [...inserted, ...items];
-      setStoredTable(this.table, items);
+      updateLocalTableCache(this.table, items);
       return { data: Array.isArray(this.mutationPayload) ? inserted : inserted[0], error: null };
     }
 
@@ -644,13 +729,13 @@ export class SyncQueryBuilder<T = any> {
         }
         return item;
       });
-      setStoredTable(this.table, items);
+      updateLocalTableCache(this.table, items);
       return { data: updated, error: null };
     }
 
     if (this.mutationType === "delete") {
       items = items.filter((item) => !this.filters.every((f) => f(item)));
-      setStoredTable(this.table, items);
+      updateLocalTableCache(this.table, items);
       return { data: null, error: null };
     }
 
@@ -674,11 +759,62 @@ export class SyncQueryBuilder<T = any> {
           items.push(itemToSave);
         }
       }
-      setStoredTable(this.table, items);
+      updateLocalTableCache(this.table, items);
       return { data: this.mutationPayload, error: null };
     }
 
     return { data: null, error: null };
+  }
+
+  private async executeMutationAsync(): Promise<{ data: any; error: any }> {
+    // 1. Perform optimistic local update so client UI is immediately responsive
+    const localResult = this.executeMutation();
+
+    // 2. Persist directly to central backend server database (/api/data)
+    if (typeof window !== "undefined") {
+      try {
+        const res = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: this.table,
+            action: this.mutationType,
+            payload: this.mutationPayload,
+            filters: this.rawFilters,
+            upsertOptions: this.upsertOptions,
+          }),
+        });
+
+        if (res.ok) {
+          const json = await res.json().catch(() => null);
+          if (json && json.error == null) {
+            // Refresh table from server to maintain perfect consistency
+            try {
+              const fullRes = await fetch(`/api/data?table=${encodeURIComponent(this.table)}`);
+              if (fullRes.ok) {
+                const fullJson = await fullRes.json();
+                if (Array.isArray(fullJson?.data)) {
+                  updateLocalTableCache(this.table, fullJson.data);
+                }
+              }
+            } catch {}
+
+            // Broadcast change to invalidate queries across all open views
+            notifyDataChanged(this.table);
+            return { data: json.data !== undefined ? json.data : localResult.data, error: null };
+          } else {
+            console.warn(`[SyncStore] Server mutation error on ${this.table}:`, json?.error);
+          }
+        }
+      } catch (networkErr) {
+        console.warn(`[SyncStore] Network error during mutation on ${this.table}:`, networkErr);
+      }
+
+      // Even on network error, notify local views
+      notifyDataChanged(this.table);
+    }
+
+    return localResult;
   }
 
   private executeQuery(): { data: any; count?: number; error: null } {
@@ -723,7 +859,6 @@ export class SyncQueryBuilder<T = any> {
     if (this.selectCols && this.selectCols !== "*") {
       const cols = this.selectCols.split(",").map((c) => c.trim());
       if (cols.length === 1 && cols[0] === "data") {
-        // Specifically for site_settings and founder_content
         items = items.map((it) => ({ data: it.data ?? it }));
       } else {
         items = items.map((it) => {
@@ -742,14 +877,73 @@ export class SyncQueryBuilder<T = any> {
     return { data: items, count: totalCount, error: null };
   }
 
-  // Thenable implementation to support async/await transparently
+  private async executeQueryAsync(): Promise<{ data: any; count?: number; error: any }> {
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL("/api/data", window.location.origin);
+        url.searchParams.set("table", this.table);
+        if (this.selectCols) url.searchParams.set("select", this.selectCols);
+        if (this.orderField) {
+          url.searchParams.set("order", this.orderField);
+          url.searchParams.set("ascending", String(this.orderAsc));
+        }
+        if (this.limitCount != null) url.searchParams.set("limit", String(this.limitCount));
+        if (this.isSingle) url.searchParams.set("single", "true");
+        if (this.isMaybeSingle) url.searchParams.set("maybeSingle", "true");
+        if (this.selectOptions?.head) url.searchParams.set("countOnly", "true");
+        for (const rf of this.rawFilters) {
+          url.searchParams.set(`${rf.op}_${rf.column}`, String(rf.value));
+        }
+
+        const res = await fetch(url.toString(), {
+          headers: { Accept: "application/json" },
+        });
+
+        if (res.ok) {
+          const json = await res.json().catch(() => null);
+          if (json && json.error == null) {
+            // Update local memory & storage cache with latest remote server data
+            if (
+              this.rawFilters.length === 0 &&
+              !this.isSingle &&
+              !this.isMaybeSingle &&
+              (!this.selectCols || this.selectCols === "*") &&
+              this.limitCount == null
+            ) {
+              if (Array.isArray(json.data)) {
+                updateLocalTableCache(this.table, json.data);
+              }
+            } else if (this.table === "site_settings" && json.data) {
+              const sData = Array.isArray(json.data) ? json.data[0]?.data : json.data?.data ?? json.data;
+              if (sData) {
+                updateLocalTableCache("site_settings", [{ id: "main", data: sData, updated_at: new Date().toISOString() }]);
+              }
+            } else if (this.table === "founder_content" && json.data) {
+              const fData = Array.isArray(json.data) ? json.data[0]?.data : json.data?.data ?? json.data;
+              if (fData) {
+                updateLocalTableCache("founder_content", [{ id: "main", data: fData, updated_at: new Date().toISOString() }]);
+              }
+            }
+
+            return { data: json.data, count: json.count, error: null };
+          }
+        }
+      } catch (err) {
+        console.warn(`[SyncStore] Remote fetch failed for ${this.table}, falling back to local:`, err);
+      }
+    }
+
+    return this.executeQuery();
+  }
+
+  // Thenable implementation to support async/await transparently with remote database
   async then(resolve?: (val: any) => any, reject?: (reason?: any) => any) {
     try {
       let result;
       if (this.mutationType) {
-        result = this.executeMutation();
+        result = await this.executeMutationAsync();
       } else {
-        result = this.executeQuery();
+        result = await this.executeQueryAsync();
       }
       return resolve ? resolve(result) : result;
     } catch (err) {
@@ -769,3 +963,4 @@ export const syncClient = {
   getTable: getStoredTable,
   setTable: setStoredTable,
 };
+

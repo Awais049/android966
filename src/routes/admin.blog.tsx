@@ -50,6 +50,8 @@ function AdminBlog() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "blog"] });
+      qc.invalidateQueries({ queryKey: ["public", "blog"] });
+      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
       setEditing(null);
     },
   });
@@ -59,7 +61,11 @@ function AdminBlog() {
       const { error } = await sb.from("blog_posts").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "blog"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "blog"] });
+      qc.invalidateQueries({ queryKey: ["public", "blog"] });
+      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+    },
   });
 
   return (

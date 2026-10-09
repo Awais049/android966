@@ -61,6 +61,8 @@ function VideosPage() {
         return mockVideos;
       }
     },
+    staleTime: 5000,
+    refetchOnMount: true,
     retry: false,
   });
 

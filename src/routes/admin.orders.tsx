@@ -32,7 +32,11 @@ function AdminOrders() {
       const { error } = await sb.from("orders").update({ status }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "orders"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
+    },
   });
 
   const del = useMutation({
@@ -42,6 +46,8 @@ function AdminOrders() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
       setOpen(null);
     },
   });

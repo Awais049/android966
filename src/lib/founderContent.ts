@@ -123,7 +123,8 @@ export function useFounderContent() {
         return {};
       }
     },
-    staleTime: 60_000,
+    staleTime: 5000,
+    refetchOnMount: true,
     retry: false,
   });
   return { content: { ...DEFAULT_FOUNDER, ...(data ?? {}) } as FounderContent, isLoading };

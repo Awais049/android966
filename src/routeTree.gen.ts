@@ -27,6 +27,7 @@ import { Route as VideosVideoIdRouteImport } from './routes/videos.$videoId'
 import { Route as StoreProductIdRouteImport } from './routes/store.$productId'
 import { Route as ServicesSlugRouteImport } from './routes/services.$slug'
 import { Route as BlogPostIdRouteImport } from './routes/blog.$postId'
+import { Route as ApiDataRouteImport } from './routes/api/data'
 import { Route as AdminVideosRouteImport } from './routes/admin.videos'
 import { Route as AdminSettingsRouteImport } from './routes/admin.settings'
 import { Route as AdminServicesRouteImport } from './routes/admin.services'
@@ -127,6 +128,11 @@ const BlogPostIdRoute = BlogPostIdRouteImport.update({
   path: '/blog/$postId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDataRoute = ApiDataRouteImport.update({
+  id: '/api/data',
+  path: '/api/data',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminVideosRoute = AdminVideosRouteImport.update({
   id: '/videos',
   path: '/videos',
@@ -191,6 +197,7 @@ export interface FileRoutesByFullPath {
   '/admin/services': typeof AdminServicesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/videos': typeof AdminVideosRoute
+  '/api/data': typeof ApiDataRoute
   '/blog/$postId': typeof BlogPostIdRoute
   '/services/$slug': typeof ServicesSlugRoute
   '/store/$productId': typeof StoreProductIdRoute
@@ -219,6 +226,7 @@ export interface FileRoutesByTo {
   '/admin/services': typeof AdminServicesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/videos': typeof AdminVideosRoute
+  '/api/data': typeof ApiDataRoute
   '/blog/$postId': typeof BlogPostIdRoute
   '/services/$slug': typeof ServicesSlugRoute
   '/store/$productId': typeof StoreProductIdRoute
@@ -249,6 +257,7 @@ export interface FileRoutesById {
   '/admin/services': typeof AdminServicesRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/videos': typeof AdminVideosRoute
+  '/api/data': typeof ApiDataRoute
   '/blog/$postId': typeof BlogPostIdRoute
   '/services/$slug': typeof ServicesSlugRoute
   '/store/$productId': typeof StoreProductIdRoute
@@ -280,6 +289,7 @@ export interface FileRouteTypes {
     | '/admin/services'
     | '/admin/settings'
     | '/admin/videos'
+    | '/api/data'
     | '/blog/$postId'
     | '/services/$slug'
     | '/store/$productId'
@@ -308,6 +318,7 @@ export interface FileRouteTypes {
     | '/admin/services'
     | '/admin/settings'
     | '/admin/videos'
+    | '/api/data'
     | '/blog/$postId'
     | '/services/$slug'
     | '/store/$productId'
@@ -337,6 +348,7 @@ export interface FileRouteTypes {
     | '/admin/services'
     | '/admin/settings'
     | '/admin/videos'
+    | '/api/data'
     | '/blog/$postId'
     | '/services/$slug'
     | '/store/$productId'
@@ -359,6 +371,7 @@ export interface RootRouteChildren {
   FounderRoute: typeof FounderRoute
   SigninRoute: typeof SigninRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  ApiDataRoute: typeof ApiDataRoute
   BlogPostIdRoute: typeof BlogPostIdRoute
   ServicesSlugRoute: typeof ServicesSlugRoute
   StoreProductIdRoute: typeof StoreProductIdRoute
@@ -498,6 +511,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BlogPostIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/data': {
+      id: '/api/data'
+      path: '/api/data'
+      fullPath: '/api/data'
+      preLoaderRoute: typeof ApiDataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/videos': {
       id: '/admin/videos'
       path: '/videos'
@@ -600,6 +620,7 @@ const rootRouteChildren: RootRouteChildren = {
   FounderRoute: FounderRoute,
   SigninRoute: SigninRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
+  ApiDataRoute: ApiDataRoute,
   BlogPostIdRoute: BlogPostIdRoute,
   ServicesSlugRoute: ServicesSlugRoute,
   StoreProductIdRoute: StoreProductIdRoute,
