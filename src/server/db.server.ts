@@ -299,7 +299,9 @@ export async function executeServerQuery(
       if (vb == null) return -1;
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * asc;
       if (field === "created_at" || field === "updated_at") {
-        return (new Date(va).getTime() - new Date(vb).getTime()) * asc;
+        const diff = (new Date(va).getTime() - new Date(vb).getTime()) * asc;
+        if (diff !== 0) return diff;
+        return String(a.id || a.slug || "").localeCompare(String(b.id || b.slug || ""));
       }
       return String(va).localeCompare(String(vb)) * asc;
     });
@@ -416,59 +418,70 @@ export async function executeServerMutation(
       const updated: any[] = [];
 
       // Extract specific target ID or slug filter if present
-      const idFilter = filters.find((f) => f.column === "id");
-      const slugFilter = filters.find((f) => f.column === "slug");
-      const targetId = idFilter != null ? String(idFilter.value) : null;
-      const targetSlug = slugFilter != null ? String(slugFilter.value) : null;
+      const idFilter = filters.find((f) => f.column === "id" || f.column === "slug");
+      const targetId =
+        idFilter != null && idFilter.value != null ? String(idFilter.value).trim() : null;
+      const newStatus = payload?.in_stock;
 
-      items = items.map((rawItem) => {
-        if (!rawItem) return rawItem;
-        const item = JSON.parse(JSON.stringify(rawItem));
-        const itemId = String(item.id ?? "");
-        const itemSlug = String(item.slug ?? "");
+      console.log("MUTATING PRODUCT ID:", targetId, "TO STATUS:", newStatus);
 
-        let isMatch = false;
-        if (targetId != null) {
-          isMatch = itemId === targetId || itemSlug === targetId;
-        } else if (targetSlug != null) {
-          isMatch = itemSlug === targetSlug || itemId === targetSlug;
-        } else {
-          isMatch =
-            filters.length === 0 ||
-            filters.every((f) => {
-              const val = item[f.column];
-              if (f.op === "eq") {
-                if (val === undefined && f.column === "id" && item.slug !== undefined) {
-                  return String(item.slug) === String(f.value);
-                }
-                return String(val) === String(f.value);
-              }
-              if (f.op === "neq") {
-                if (val === undefined && f.column === "id" && item.slug !== undefined) {
-                  return String(item.slug) !== String(f.value);
-                }
-                return String(val) !== String(f.value);
-              }
-              return true;
-            });
-        }
+      // Deep clone database array cleanly
+      const clonedItems: any[] = JSON.parse(JSON.stringify(items || []));
 
-        if (isMatch) {
+      if (targetId) {
+        // Strictly locate the unique item by ID or slug
+        const targetIndex = clonedItems.findIndex((it) => {
+          if (!it) return false;
+          const itemId = String(it.id ?? "").trim();
+          const itemSlug = String(it.slug ?? "").trim();
+          return itemId === targetId || itemSlug === targetId;
+        });
+
+        if (targetIndex !== -1) {
+          const existing = clonedItems[targetIndex];
           const next = {
-            ...item,
+            ...existing,
             ...payload,
-            id: payload.id !== undefined && payload.id !== "" ? payload.id : item.id,
-            slug: payload.slug !== undefined && payload.slug !== "" ? payload.slug : item.slug,
+            id:
+              payload.id !== undefined && payload.id !== ""
+                ? payload.id
+                : existing.id || targetId,
+            slug:
+              payload.slug !== undefined && payload.slug !== ""
+                ? payload.slug
+                : existing.slug || targetId,
             updated_at: new Date().toISOString(),
           };
           const clonedNext = JSON.parse(JSON.stringify(next));
+          clonedItems[targetIndex] = clonedNext;
           updated.push(clonedNext);
-          return clonedNext;
+        } else {
+          console.warn(`[ServerDB] Product ID/Slug "${targetId}" not found for update in ${table}`);
         }
+      } else if (filters.length > 0) {
+        for (let i = 0; i < clonedItems.length; i++) {
+          const item = clonedItems[i];
+          if (!item) continue;
+          const isMatch = filters.every((f) => {
+            const val = item[f.column];
+            if (f.op === "eq") return String(val) === String(f.value);
+            if (f.op === "neq") return String(val) !== String(f.value);
+            return true;
+          });
+          if (isMatch) {
+            const next = {
+              ...item,
+              ...payload,
+              updated_at: new Date().toISOString(),
+            };
+            const clonedNext = JSON.parse(JSON.stringify(next));
+            clonedItems[i] = clonedNext;
+            updated.push(clonedNext);
+          }
+        }
+      }
 
-        return item;
-      });
-
+      items = clonedItems;
       writeServerTable(table, items);
       await saveToRemoteKv(table, items);
       return { data: JSON.parse(JSON.stringify(updated)), error: null };

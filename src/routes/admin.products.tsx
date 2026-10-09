@@ -118,21 +118,16 @@ function AdminProducts() {
 
   const toggleStock = useMutation({
     mutationKey: ["products", "stock"],
-    mutationFn: async (row: ProductRow) => {
-      const targetId = String(row.id || row.slug);
-      const nextStock = !row.in_stock;
-
+    mutationFn: async ({ targetId, newStatus }: { targetId: string; newStatus: boolean }) => {
+      console.log("MUTATING PRODUCT ID:", targetId, "TO STATUS:", newStatus);
       const { error } = await sb
         .from("products")
-        .update({ in_stock: nextStock })
+        .update({ in_stock: newStatus })
         .eq("id", targetId);
       if (error) throw error;
-      return { id: targetId, nextStock };
+      return { targetId, newStatus };
     },
-    onMutate: async (row: ProductRow) => {
-      const targetId = String(row.id || row.slug);
-      const nextStock = !row.in_stock;
-
+    onMutate: async ({ targetId, newStatus }) => {
       // Cancel outgoing queries to prevent overwriting optimistic UI
       await qc.cancelQueries({ queryKey: ["admin", "products"] });
       await qc.cancelQueries({ queryKey: ["public", "products"] });
@@ -151,7 +146,7 @@ function AdminProducts() {
             const pId = String(p.id ?? "");
             const pSlug = String(p.slug ?? "");
             if (pId === targetId || pSlug === targetId) {
-              return { ...p, in_stock: nextStock };
+              return { ...p, in_stock: newStatus };
             }
             return p;
           });
@@ -165,7 +160,7 @@ function AdminProducts() {
             const pId = String(p.id ?? "");
             const pSlug = String(p.slug ?? "");
             if (pId === targetId || pSlug === targetId) {
-              return { ...p, in_stock: nextStock };
+              return { ...p, in_stock: newStatus };
             }
             return p;
           });
@@ -179,7 +174,7 @@ function AdminProducts() {
             const pId = String(p.id ?? "");
             const pSlug = String(p.slug ?? "");
             if (pId === targetId || pSlug === targetId) {
-              return { ...p, in_stock: nextStock };
+              return { ...p, in_stock: newStatus };
             }
             return p;
           });
@@ -209,6 +204,12 @@ function AdminProducts() {
       }
     },
   });
+
+  const handleToggleStock = (targetId: string, currentStatus: boolean) => {
+    const newStatus = !currentStatus;
+    console.log("MUTATING PRODUCT ID:", targetId, "TO STATUS:", newStatus);
+    toggleStock.mutate({ targetId, newStatus });
+  };
 
   return (
     <div>
@@ -240,43 +241,59 @@ function AdminProducts() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-slate-900">{r.name}</p>
-                    <p className="text-xs text-slate-500">{r.slug}</p>
-                  </td>
-                  <td className="px-4 py-3 capitalize text-slate-600">{r.category}</td>
-                  <td className="px-4 py-3 text-slate-900">Rs {Number(r.price).toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => toggleStock.mutate(r)}
-                      className={`rounded-full px-2 py-0.5 text-xs transition-colors ${
-                        r.in_stock
-                          ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          : "bg-red-50 text-red-700 hover:bg-red-100"
-                      }`}
-                      title="Click to toggle stock"
-                    >
-                      {r.in_stock ? "In stock" : "Out of stock"}
-                    </button>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => setEditing(r)}
-                      className="mr-2 inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                    >
-                      <Pencil className="h-3 w-3" /> Edit
-                    </button>
-                    <button
-                      onClick={() => confirm(`Delete "${r.name}"?`) && del.mutate(r.id)}
-                      className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-3 w-3" /> Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((product) => {
+                const targetId = String(product.id || product.slug);
+                const isStocked = Boolean(product.in_stock);
+
+                return (
+                  <tr key={targetId}>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-slate-900">{product.name}</p>
+                      <p className="text-xs text-slate-500">{product.slug}</p>
+                    </td>
+                    <td className="px-4 py-3 capitalize text-slate-600">{product.category}</td>
+                    <td className="px-4 py-3 text-slate-900">
+                      Rs {Number(product.price).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        data-product-id={targetId}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleStock(targetId, isStocked);
+                        }}
+                        className={`rounded-full px-2 py-0.5 text-xs transition-colors ${
+                          isStocked
+                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                            : "bg-red-50 text-red-700 hover:bg-red-100"
+                        }`}
+                        title="Click to toggle stock"
+                      >
+                        {isStocked ? "In stock" : "Out of stock"}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setEditing(product)}
+                        className="mr-2 inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      >
+                        <Pencil className="h-3 w-3" /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          confirm(`Delete "${product.name}"?`) && del.mutate(targetId)
+                        }
+                        className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-3 w-3" /> Delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           </div>

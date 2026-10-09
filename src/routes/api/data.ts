@@ -79,6 +79,15 @@ export const Route = createFileRoute("/api/data")({
 
           const { table, action, queryParams, payload, filters, upsertOptions } = body;
 
+          if (action === "update") {
+            const idFilter = (filters || []).find(
+              (f: any) => f.column === "id" || f.column === "slug",
+            );
+            const targetId = idFilter?.value ?? payload?.id ?? payload?.slug ?? "unknown";
+            const newStatus = payload?.in_stock;
+            console.log("MUTATING PRODUCT ID:", targetId, "TO STATUS:", newStatus);
+          }
+
           if (action === "query") {
             const result = await executeServerQuery(table, queryParams || {});
             return Response.json(result, { headers: NO_CACHE_HEADERS });

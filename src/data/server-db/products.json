@@ -342,7 +342,7 @@
     "badge": "New",
     "image": "https://images.unsplash.com/photo-1594035910387-fea47794261f?auto=format&fit=crop&w=800&q=80",
     "description": "Warm amber blended with rich oud. Premium 100ml EDP at a price jo market se kaafi kam hai.",
-    "in_stock": true,
+    "in_stock": false,
     "sku": "PERF-005",
     "variants": [],
     "specs": {
@@ -360,7 +360,7 @@
       "New"
     ],
     "created_at": "2026-10-09T17:41:52.333Z",
-    "updated_at": "2026-10-09T19:15:34.334Z"
+    "updated_at": "2026-10-09T19:39:36.528Z"
   },
   {
     "id": "white-oud-spray-75ml",
@@ -375,7 +375,7 @@
     "badge": null,
     "image": "https://images.unsplash.com/photo-1523293182086-7651a899d37f?auto=format&fit=crop&w=800&q=80",
     "description": "Light, airy oud variant for everyday use. Refreshing fragrance jo office aur college dono mein suit kare.",
-    "in_stock": true,
+    "in_stock": false,
     "sku": "PERF-006",
     "variants": [],
     "specs": {
@@ -393,6 +393,6 @@
       "Affordable"
     ],
     "created_at": "2026-10-09T17:41:52.333Z",
-    "updated_at": "2026-10-09T19:15:58.665Z"
+    "updated_at": "2026-10-09T19:40:02.583Z"
   }
 ]

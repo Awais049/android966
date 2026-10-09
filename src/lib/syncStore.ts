@@ -599,8 +599,9 @@ export class SyncQueryBuilder<T = any> {
     this.filters.push((item) => {
       if (item == null) return false;
       const v = item[column];
-      if (v === undefined && column === "id" && item.slug !== undefined) {
-        return String(item.slug) === String(value);
+      if (column === "id" || column === "slug") {
+        const valStr = String(value).trim();
+        return String(item.id ?? "").trim() === valStr || String(item.slug ?? "").trim() === valStr;
       }
       return String(v) === String(value);
     });
@@ -719,18 +720,51 @@ export class SyncQueryBuilder<T = any> {
     }
 
     if (this.mutationType === "update") {
-      const payload = this.mutationPayload;
+      const payload = JSON.parse(JSON.stringify(this.mutationPayload || {}));
+      const idFilter = this.rawFilters.find((f) => f.column === "id" || f.column === "slug");
+      const targetId =
+        idFilter != null && idFilter.value != null ? String(idFilter.value).trim() : null;
+
+      const clonedItems: any[] = JSON.parse(JSON.stringify(items || []));
       const updated: any[] = [];
-      items = items.map((item) => {
-        const matches = this.filters.length === 0 || this.filters.every((f) => f(item));
-        if (matches) {
-          const next = { ...item, ...payload, updated_at: new Date().toISOString() };
+
+      if (targetId) {
+        const targetIndex = clonedItems.findIndex((it: any) => {
+          if (!it) return false;
+          const itemId = String(it.id ?? "").trim();
+          const itemSlug = String(it.slug ?? "").trim();
+          return itemId === targetId || itemSlug === targetId;
+        });
+
+        if (targetIndex !== -1) {
+          const existing = clonedItems[targetIndex];
+          const next = {
+            ...existing,
+            ...payload,
+            id:
+              payload.id !== undefined && payload.id !== ""
+                ? payload.id
+                : existing.id || targetId,
+            slug:
+              payload.slug !== undefined && payload.slug !== ""
+                ? payload.slug
+                : existing.slug || targetId,
+            updated_at: new Date().toISOString(),
+          };
+          clonedItems[targetIndex] = next;
           updated.push(next);
-          return next;
         }
-        return item;
-      });
-      updateLocalTableCache(this.table, items);
+      } else if (this.filters.length > 0) {
+        for (let i = 0; i < clonedItems.length; i++) {
+          if (clonedItems[i] && this.filters.every((f) => f(clonedItems[i]))) {
+            const next = { ...clonedItems[i], ...payload, updated_at: new Date().toISOString() };
+            clonedItems[i] = next;
+            updated.push(next);
+          }
+        }
+      }
+
+      updateLocalTableCache(this.table, clonedItems);
       return { data: updated, error: null };
     }
 
@@ -859,7 +893,9 @@ export class SyncQueryBuilder<T = any> {
         if (vb == null) return -1;
         if (typeof va === "number" && typeof vb === "number") return (va - vb) * asc;
         if (field === "created_at" || field === "updated_at") {
-          return (new Date(va).getTime() - new Date(vb).getTime()) * asc;
+          const diff = (new Date(va).getTime() - new Date(vb).getTime()) * asc;
+          if (diff !== 0) return diff;
+          return String(a.id || a.slug || "").localeCompare(String(b.id || b.slug || ""));
         }
         return String(va).localeCompare(String(vb)) * asc;
       });
