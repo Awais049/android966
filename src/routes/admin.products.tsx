@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Pencil, X } from "lucide-react";
@@ -31,15 +31,17 @@ const empty: Partial<ProductRow> = {
 function AdminProducts() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Partial<ProductRow> | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["admin", "products"],
     queryFn: async () => {
       try {
-        const { data, error } = await sb
-          .from("products")
-          .select("*")
-          .order("created_at", { ascending: false });
+        const { data, error } = await sb.from("products").select("*");
         if (error) throw error;
         return (data ?? []) as ProductRow[];
       } catch (err) {
@@ -47,6 +49,9 @@ function AdminProducts() {
         return [];
       }
     },
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 60000,
     retry: false,
   });
 
@@ -122,66 +127,61 @@ function AdminProducts() {
       console.log("MUTATING PRODUCT ID:", targetId, "TO STATUS:", newStatus);
       const { error } = await sb
         .from("products")
-        .update({ in_stock: newStatus })
+        .update({ in_stock: newStatus, inStock: newStatus })
         .eq("id", targetId);
       if (error) throw error;
       return { targetId, newStatus };
     },
     onMutate: async ({ targetId, newStatus }) => {
-      // Cancel outgoing queries to prevent overwriting optimistic UI
-      await qc.cancelQueries({ queryKey: ["admin", "products"] });
-      await qc.cancelQueries({ queryKey: ["public", "products"] });
-      await qc.cancelQueries({ queryKey: ["products"] });
-
       // Snapshot previous states for rollback
       const prevAdmin = qc.getQueryData<ProductRow[]>(["admin", "products"]);
       const prevPublic = qc.getQueryData<any[]>(["public", "products"]);
       const prevProducts = qc.getQueryData<any[]>(["products"]);
 
-      // Immediately reflect stock change across admin and public caches
-      if (prevAdmin) {
-        qc.setQueryData<ProductRow[]>(["admin", "products"], (old) => {
-          if (!old) return old;
-          return old.map((p) => {
-            const pId = String(p.id ?? "");
-            const pSlug = String(p.slug ?? "");
-            if (pId === targetId || pSlug === targetId) {
-              return { ...p, in_stock: newStatus };
-            }
-            return p;
-          });
+      const applyStatus = (list: any[] | undefined) => {
+        if (!list) return list;
+        return list.map((p) => {
+          const pId = String(p.id ?? "");
+          const pSlug = String(p.slug ?? "");
+          if (pId === targetId || pSlug === targetId) {
+            return {
+              ...p,
+              in_stock: newStatus,
+              inStock: newStatus,
+              updated_at: new Date().toISOString(),
+            };
+          }
+          return p;
         });
-      }
+      };
 
-      if (prevPublic) {
-        qc.setQueryData<any[]>(["public", "products"], (old) => {
-          if (!old) return old;
-          return old.map((p) => {
-            const pId = String(p.id ?? "");
-            const pSlug = String(p.slug ?? "");
-            if (pId === targetId || pSlug === targetId) {
-              return { ...p, in_stock: newStatus };
-            }
-            return p;
-          });
-        });
-      }
-
-      if (prevProducts) {
-        qc.setQueryData<any[]>(["products"], (old) => {
-          if (!old) return old;
-          return old.map((p) => {
-            const pId = String(p.id ?? "");
-            const pSlug = String(p.slug ?? "");
-            if (pId === targetId || pSlug === targetId) {
-              return { ...p, in_stock: newStatus };
-            }
-            return p;
-          });
-        });
-      }
+      // Immediately reflect stock change across all query caches
+      qc.setQueryData<ProductRow[]>(["admin", "products"], applyStatus);
+      qc.setQueryData<any[]>(["public", "products"], applyStatus);
+      qc.setQueryData<any[]>(["products"], applyStatus);
 
       return { prevAdmin, prevPublic, prevProducts };
+    },
+    onSuccess: ({ targetId, newStatus }) => {
+      const applyStatus = (list: any[] | undefined) => {
+        if (!list) return list;
+        return list.map((p) => {
+          const pId = String(p.id ?? "");
+          const pSlug = String(p.slug ?? "");
+          if (pId === targetId || pSlug === targetId) {
+            return {
+              ...p,
+              in_stock: newStatus,
+              inStock: newStatus,
+              updated_at: new Date().toISOString(),
+            };
+          }
+          return p;
+        });
+      };
+      qc.setQueryData<ProductRow[]>(["admin", "products"], applyStatus);
+      qc.setQueryData<any[]>(["public", "products"], applyStatus);
+      qc.setQueryData<any[]>(["products"], applyStatus);
     },
     onError: (_err, _vars, context) => {
       if (context?.prevAdmin) {
@@ -192,15 +192,6 @@ function AdminProducts() {
       }
       if (context?.prevProducts) {
         qc.setQueryData(["products"], context.prevProducts);
-      }
-    },
-    onSettled: async () => {
-      // Invalidate strictly after promise settles. If another stock toggle is in flight, let the last one trigger it.
-      if (qc.isMutating({ mutationKey: ["products", "stock"] }) <= 1) {
-        await qc.invalidateQueries({ queryKey: ["admin", "products"] });
-        await qc.invalidateQueries({ queryKey: ["public", "products"] });
-        await qc.invalidateQueries({ queryKey: ["products"] });
-        await qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
       }
     },
   });
@@ -224,7 +215,7 @@ function AdminProducts() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        {isLoading ? (
+        {!mounted || isLoading ? (
           <p className="p-6 text-sm text-slate-500">Loading…</p>
         ) : rows.length === 0 ? (
           <p className="p-6 text-sm text-slate-500">No products yet. Add your first product.</p>

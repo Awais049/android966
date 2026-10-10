@@ -42,18 +42,36 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Register service worker
+    // Register service worker (production only)
     if ("serviceWorker" in navigator && process.env.NODE_ENV !== "test") {
-      window.addEventListener("load", () => {
-        navigator.serviceWorker
-          .register("/sw.js")
-          .then((reg) => {
-            console.log("[PWA] Service Worker registered with scope:", reg.scope);
-          })
-          .catch((err) => {
-            console.warn("[PWA] Service Worker registration failed:", err);
+      const isLocalhost =
+        typeof window !== "undefined" &&
+        (window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1" ||
+          window.location.hostname.endsWith(".local"));
+
+      if (isLocalhost) {
+        // In local development, ensure any previous service workers and caches are purged
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          for (const reg of registrations) reg.unregister();
+        });
+        if ("caches" in window) {
+          caches.keys().then((keys) => {
+            for (const key of keys) caches.delete(key);
           });
-      });
+        }
+      } else {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("/sw.js")
+            .then((reg) => {
+              console.log("[PWA] Service Worker registered with scope:", reg.scope);
+            })
+            .catch((err) => {
+              console.warn("[PWA] Service Worker registration failed:", err);
+            });
+        });
+      }
     }
 
     // Capture beforeinstallprompt

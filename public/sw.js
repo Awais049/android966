@@ -1,5 +1,5 @@
 // Android 966 Progressive Web App Service Worker
-const CACHE_NAME = "a9-pwa-v2";
+const CACHE_NAME = "a9-pwa-v3";
 
 const STATIC_PRECACHE = [
   "/",
@@ -51,6 +51,16 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
+
+  // NEVER intercept API calls, admin dashboard requests, or dev modules
+  if (
+    url.pathname.startsWith("/api") ||
+    url.pathname.startsWith("/admin") ||
+    url.pathname.includes("/@") ||
+    url.pathname.includes("node_modules")
+  ) {
+    return;
+  }
 
   // Don't intercept analytics, third-party auth, or external APIs
   if (

@@ -197,6 +197,14 @@ export function writeServerTable(table: string, items: any[]): void {
     // Never crash on read-only serverless filesystems
     console.warn(`[ServerDB] Notice: Local disk write failed (${table}):`, err);
   }
+
+  // Also sync to src/data/server-db if distinct
+  try {
+    const srcPath = path.resolve(process.cwd(), "src/data/server-db", `${table}.json`);
+    if (srcPath !== filePath && fs.existsSync(path.dirname(srcPath))) {
+      fs.writeFileSync(srcPath, JSON.stringify(items, null, 2), "utf-8");
+    }
+  } catch {}
 }
 
 // ----------------------------------------------------

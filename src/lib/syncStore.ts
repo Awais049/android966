@@ -962,7 +962,46 @@ export class SyncQueryBuilder<T = any> {
               this.limitCount == null
             ) {
               if (Array.isArray(json.data)) {
-                updateLocalTableCache(this.table, json.data);
+                const current = getStoredTable(this.table);
+                const currentMap = new Map<string, any>();
+                for (const item of current) {
+                  if (item) {
+                    const key = String(item.id || item.slug || "").trim();
+                    if (key) currentMap.set(key, item);
+                  }
+                }
+
+                // Merge server items with local items: newer updated_at always wins
+                const mergedList: any[] = [];
+                const seenKeys = new Set<string>();
+
+                for (const serverItem of json.data) {
+                  if (!serverItem) continue;
+                  const key = String(serverItem.id || serverItem.slug || "").trim();
+                  seenKeys.add(key);
+                  const localItem = currentMap.get(key);
+
+                  if (localItem && localItem.updated_at && serverItem.updated_at) {
+                    const localTime = new Date(localItem.updated_at).getTime();
+                    const serverTime = new Date(serverItem.updated_at).getTime();
+                    if (localTime > serverTime) {
+                      // Local modification is more recent than server snapshot; preserve local!
+                      mergedList.push(localItem);
+                      continue;
+                    }
+                  }
+                  mergedList.push(serverItem);
+                }
+
+                // Keep any newly added local records not yet present on server
+                for (const [key, localItem] of currentMap.entries()) {
+                  if (!seenKeys.has(key)) {
+                    mergedList.push(localItem);
+                  }
+                }
+
+                updateLocalTableCache(this.table, mergedList);
+                return { data: mergedList, count: mergedList.length, error: null };
               }
             } else if (this.table === "site_settings" && json.data) {
               const sData = Array.isArray(json.data) ? json.data[0]?.data : json.data?.data ?? json.data;

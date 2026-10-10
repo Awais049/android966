@@ -29,8 +29,8 @@
       "Bluetooth 5.3",
       "Android 966 Pick"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T18:09:42.508Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "20000mah-power-bank-fast-charge",
@@ -62,8 +62,8 @@
       "20000mAh",
       "Travel Essential"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "ring-light-10-tripod",
@@ -95,8 +95,8 @@
       "Tripod",
       "Lighting"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "smart-watch-series-7",
@@ -128,8 +128,8 @@
       "Health",
       "Wearable"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "bluetooth-car-speaker",
@@ -161,8 +161,8 @@
       "Portable",
       "Outdoor"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "usb-c-hub-7-in-1",
@@ -194,8 +194,8 @@
       "Laptop",
       "Productivity"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "oud-noir-intense-edp-100ml",
@@ -227,8 +227,8 @@
       "Unisex",
       "Bestseller"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "arabian-nights-edp-75ml",
@@ -260,8 +260,8 @@
       "Rose",
       "Oud"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "rose-saffron-attar-12ml",
@@ -293,8 +293,8 @@
       "Natural",
       "Daily"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "musk-al-tahara-50ml",
@@ -326,8 +326,8 @@
       "Daily",
       "Soft"
     ],
-    "created_at": "2026-10-09T17:41:52.332Z",
-    "updated_at": "2026-10-09T17:41:52.332Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "amber-oud-edp-100ml",
@@ -342,7 +342,7 @@
     "badge": "New",
     "image": "https://images.unsplash.com/photo-1594035910387-fea47794261f?auto=format&fit=crop&w=800&q=80",
     "description": "Warm amber blended with rich oud. Premium 100ml EDP at a price jo market se kaafi kam hai.",
-    "in_stock": false,
+    "in_stock": true,
     "sku": "PERF-005",
     "variants": [],
     "specs": {
@@ -359,8 +359,8 @@
       "Premium",
       "New"
     ],
-    "created_at": "2026-10-09T17:41:52.333Z",
-    "updated_at": "2026-10-09T19:39:36.528Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   },
   {
     "id": "white-oud-spray-75ml",
@@ -375,7 +375,7 @@
     "badge": null,
     "image": "https://images.unsplash.com/photo-1523293182086-7651a899d37f?auto=format&fit=crop&w=800&q=80",
     "description": "Light, airy oud variant for everyday use. Refreshing fragrance jo office aur college dono mein suit kare.",
-    "in_stock": false,
+    "in_stock": true,
     "sku": "PERF-006",
     "variants": [],
     "specs": {
@@ -392,7 +392,7 @@
       "Daily",
       "Affordable"
     ],
-    "created_at": "2026-10-09T17:41:52.333Z",
-    "updated_at": "2026-10-09T19:40:02.583Z"
+    "created_at": "2026-10-10T11:11:23.786Z",
+    "updated_at": "2026-10-10T11:11:23.786Z"
   }
 ]
