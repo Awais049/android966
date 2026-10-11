@@ -127,10 +127,10 @@ function AdminProducts() {
       console.log("MUTATING PRODUCT ID:", targetId, "TO STATUS:", newStatus);
       const { error } = await sb
         .from("products")
-        .update({ in_stock: newStatus, inStock: newStatus })
+        .update({ in_stock: Boolean(newStatus) })
         .eq("id", targetId);
       if (error) throw error;
-      return { targetId, newStatus };
+      return { targetId, newStatus: Boolean(newStatus) };
     },
     onMutate: async ({ targetId, newStatus }) => {
       // Snapshot previous states for rollback

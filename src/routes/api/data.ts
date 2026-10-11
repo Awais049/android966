@@ -84,8 +84,9 @@ export const Route = createFileRoute("/api/data")({
               (f: any) => f.column === "id" || f.column === "slug",
             );
             const targetId = idFilter?.value ?? payload?.id ?? payload?.slug ?? "unknown";
-            const newStatus = payload?.in_stock;
-            console.log("MUTATING PRODUCT ID:", targetId, "TO STATUS:", newStatus);
+            const rawStock = payload?.in_stock !== undefined ? payload.in_stock : payload?.inStock;
+            const newStatus = rawStock !== undefined ? Boolean(rawStock) : undefined;
+            console.log(`[API /api/data] MUTATING ${table} ID:`, targetId, "IN_STOCK:", newStatus);
           }
 
           if (action === "query") {
@@ -101,6 +102,10 @@ export const Route = createFileRoute("/api/data")({
           };
 
           const result = await executeServerMutation(table, mutationParams);
+          if (result.error) {
+            console.error(`[API /api/data POST error on ${table}]:`, result.error);
+            return Response.json(result, { status: 400, headers: NO_CACHE_HEADERS });
+          }
           return Response.json(result, { headers: NO_CACHE_HEADERS });
         } catch (err: any) {
           console.error("[API /api/data POST error]:", err);

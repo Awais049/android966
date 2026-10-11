@@ -60,6 +60,68 @@ export function isTableMissingError(err: any): boolean {
   );
 }
 
+const PRODUCT_COLUMNS = new Set([
+  "id",
+  "slug",
+  "name",
+  "category",
+  "subcategory",
+  "price",
+  "original_price",
+  "rating",
+  "reviews",
+  "badge",
+  "image",
+  "description",
+  "in_stock",
+  "sku",
+  "variants",
+  "specs",
+  "tags",
+  "created_at",
+  "updated_at",
+]);
+
+export function sanitizeProductPayload(payload: any): Record<string, any> {
+  if (!payload || typeof payload !== "object") return payload;
+  const clean: Record<string, any> = {};
+
+  // 1. Explicit boolean cast for in_stock
+  if (payload.in_stock !== undefined) {
+    clean.in_stock = Boolean(payload.in_stock);
+  } else if (payload.inStock !== undefined) {
+    clean.in_stock = Boolean(payload.inStock);
+  }
+
+  // 2. Explicit numeric cast for price & original_price
+  if (payload.price !== undefined) {
+    clean.price = Number(payload.price);
+  }
+  if (payload.original_price !== undefined) {
+    clean.original_price = payload.original_price === null ? null : Number(payload.original_price);
+  } else if (payload.originalPrice !== undefined) {
+    clean.original_price = payload.originalPrice === null ? null : Number(payload.originalPrice);
+  }
+
+  // 3. Copy other valid schema columns only (filters out inStock, originalPrice, emoji, bgColor, etc.)
+  for (const [key, value] of Object.entries(payload)) {
+    if (
+      key === "inStock" ||
+      key === "originalPrice" ||
+      key === "in_stock" ||
+      key === "price" ||
+      key === "original_price"
+    ) {
+      continue;
+    }
+    if (PRODUCT_COLUMNS.has(key)) {
+      clean[key] = value;
+    }
+  }
+
+  return clean;
+}
+
 export function getInitialTableData(table: string): any[] {
   switch (table) {
     case "products":
@@ -387,7 +449,10 @@ export async function executeServerMutation(
     // Insert action
     if (params.action === "insert") {
       const rawRecords = Array.isArray(params.payload) ? params.payload : [params.payload];
-      const records = JSON.parse(JSON.stringify(rawRecords));
+      let records = JSON.parse(JSON.stringify(rawRecords));
+      if (table === "products") {
+        records = records.map(sanitizeProductPayload);
+      }
       const inserted = records.map((r: any) => {
         const id =
           r.id || r.slug || `rec_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -413,12 +478,16 @@ export async function executeServerMutation(
             writeServerTable(table, globalDb[table]);
             return { data: resultData, error: null };
           }
-          if (sbError && !isTableMissingError(sbError)) {
-            console.warn(`[ServerDB] Supabase insert warning on ${table}:`, sbError.message);
+          if (sbError) {
+            console.error(`[ServerDB SQL Insert Error on ${table}]:`, sbError);
+            if (!isTableMissingError(sbError)) {
+              return { data: null, error: sbError.message || "Database insert failed" };
+            }
           }
         }
       } catch (err: any) {
-        console.warn(`[ServerDB] Supabase insert exception on ${table}:`, err?.message || err);
+        console.error(`[ServerDB Insert Exception on ${table}]:`, err);
+        return { data: null, error: err?.message || "Database insert exception" };
       }
 
       // Safe fallback if Supabase table is not yet provisioned
@@ -431,7 +500,10 @@ export async function executeServerMutation(
 
     // Update action
     if (params.action === "update") {
-      const payload = JSON.parse(JSON.stringify(params.payload || {}));
+      let payload = JSON.parse(JSON.stringify(params.payload || {}));
+      if (table === "products") {
+        payload = sanitizeProductPayload(payload);
+      }
       const filters = params.filters ?? [];
       const idFilter = filters.find((f) => f.column === "id" || f.column === "slug");
       const targetId =
@@ -440,17 +512,31 @@ export async function executeServerMutation(
       // DIRECT OPERATION ON SUPABASE
       try {
         if (client?.from) {
-          let q = client.from(table).update({ ...payload, updated_at: new Date().toISOString() });
+          const updateData = { ...payload, updated_at: new Date().toISOString() };
+          let q = client.from(table).update(updateData);
+
           if (targetId) {
-            q = q.or(`id.eq.${targetId},slug.eq.${targetId}`);
-          } else {
+            q = q.eq("id", targetId);
+          } else if (filters.length > 0) {
             for (const f of filters) {
               if (f.op === "eq") q = q.eq(f.column, f.value);
               if (f.op === "neq") q = q.neq(f.column, f.value);
             }
           }
-          const { data: sbData, error: sbError } = await q.select();
-          if (!sbError && sbData) {
+
+          let { data: sbData, error: sbError } = await q.select();
+
+          // If updating by ID matched 0 rows, try matching by slug as fallback
+          if (!sbError && targetId && Array.isArray(sbData) && sbData.length === 0) {
+            const slugRes = await client.from(table).update(updateData).eq("slug", targetId).select();
+            if (!slugRes.error && slugRes.data && slugRes.data.length > 0) {
+              sbData = slugRes.data;
+            } else if (slugRes.error) {
+              sbError = slugRes.error;
+            }
+          }
+
+          if (!sbError && sbData && sbData.length > 0) {
             const current = globalDb[table] || [];
             const updatedRows = Array.isArray(sbData) ? sbData : [sbData];
             const updatedMap = new Map(updatedRows.map((r: any) => [String(r.id || r.slug), r]));
@@ -460,14 +546,20 @@ export async function executeServerMutation(
             });
             globalDb[table] = next;
             writeServerTable(table, next);
+            console.log(`[ServerDB] Successfully updated ${table} ID: ${targetId}, in_stock:`, updateData.in_stock);
             return { data: sbData, error: null };
           }
-          if (sbError && !isTableMissingError(sbError)) {
-            console.warn(`[ServerDB] Supabase update warning on ${table}:`, sbError.message);
+
+          if (sbError) {
+            console.error(`[ServerDB SQL Update Error on ${table}]:`, sbError);
+            if (!isTableMissingError(sbError)) {
+              return { data: null, error: sbError.message || "Database update failed" };
+            }
           }
         }
       } catch (err: any) {
-        console.warn(`[ServerDB] Supabase update exception on ${table}:`, err?.message || err);
+        console.error(`[ServerDB Update Exception on ${table}]:`, err);
+        return { data: null, error: err?.message || "Database update exception" };
       }
 
       // Safe fallback
@@ -581,7 +673,10 @@ export async function executeServerMutation(
     // Upsert action
     if (params.action === "upsert") {
       const rawRecords = Array.isArray(params.payload) ? params.payload : [params.payload];
-      const records = JSON.parse(JSON.stringify(rawRecords));
+      let records = JSON.parse(JSON.stringify(rawRecords));
+      if (table === "products") {
+        records = records.map(sanitizeProductPayload);
+      }
       const conflictKey = params.upsertOptions?.onConflict || "id";
 
       // DIRECT OPERATION ON SUPABASE
@@ -608,12 +703,16 @@ export async function executeServerMutation(
             writeServerTable(table, next);
             return { data: sbData, error: null };
           }
-          if (sbError && !isTableMissingError(sbError)) {
-            console.warn(`[ServerDB] Supabase upsert warning on ${table}:`, sbError.message);
+          if (sbError) {
+            console.error(`[ServerDB SQL Upsert Error on ${table}]:`, sbError);
+            if (!isTableMissingError(sbError)) {
+              return { data: null, error: sbError.message || "Database upsert failed" };
+            }
           }
         }
       } catch (err: any) {
-        console.warn(`[ServerDB] Supabase upsert exception on ${table}:`, err?.message || err);
+        console.error(`[ServerDB Upsert Exception on ${table}]:`, err);
+        return { data: null, error: err?.message || "Database upsert exception" };
       }
 
       // Safe fallback
