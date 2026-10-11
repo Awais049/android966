@@ -236,46 +236,69 @@ GRANT INSERT ON public.orders TO anon, authenticated;
 GRANT ALL ON public.profiles TO authenticated;
 GRANT ALL ON public.products, public.services, public.blog_posts, public.videos, public.promo_banners, public.founder_content, public.site_settings TO authenticated;
 
--- Policies
+-- Policies for Products
 DROP POLICY IF EXISTS "Public read products" ON public.products;
 CREATE POLICY "Public read products" ON public.products FOR SELECT USING (true);
+
 DROP POLICY IF EXISTS "Admins or service write products" ON public.products;
 CREATE POLICY "Admins or service write products" ON public.products FOR ALL USING (true) WITH CHECK (true);
 
+-- Policies for Services
 DROP POLICY IF EXISTS "Public read services" ON public.services;
 CREATE POLICY "Public read services" ON public.services FOR SELECT USING (true);
+
 DROP POLICY IF EXISTS "Admins write services" ON public.services;
 CREATE POLICY "Admins write services" ON public.services FOR ALL USING (true) WITH CHECK (true);
 
+-- Policies for Blog Posts
 DROP POLICY IF EXISTS "Public read blog_posts" ON public.blog_posts;
 CREATE POLICY "Public read blog_posts" ON public.blog_posts FOR SELECT USING (true);
-DROP POLICY IF EXISTS "Admins write blog_posts" ON public.blog_posts FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Admins write blog_posts" ON public.blog_posts;
+CREATE POLICY "Admins write blog_posts" ON public.blog_posts FOR ALL USING (true) WITH CHECK (true);
+
+-- Policies for Videos
 DROP POLICY IF EXISTS "Public read videos" ON public.videos;
 CREATE POLICY "Public read videos" ON public.videos FOR SELECT USING (true);
-DROP POLICY IF EXISTS "Admins write videos" ON public.videos FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Admins write videos" ON public.videos;
+CREATE POLICY "Admins write videos" ON public.videos FOR ALL USING (true) WITH CHECK (true);
+
+-- Policies for Promo Banners
 DROP POLICY IF EXISTS "Public read promo_banners" ON public.promo_banners;
 CREATE POLICY "Public read promo_banners" ON public.promo_banners FOR SELECT USING (true);
-DROP POLICY IF EXISTS "Admins write promo_banners" ON public.promo_banners FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Admins write promo_banners" ON public.promo_banners;
+CREATE POLICY "Admins write promo_banners" ON public.promo_banners FOR ALL USING (true) WITH CHECK (true);
+
+-- Policies for Orders
 DROP POLICY IF EXISTS "Anyone place order" ON public.orders;
 CREATE POLICY "Anyone place order" ON public.orders FOR INSERT WITH CHECK (true);
+
 DROP POLICY IF EXISTS "Read orders" ON public.orders;
 CREATE POLICY "Read orders" ON public.orders FOR SELECT USING (true);
+
 DROP POLICY IF EXISTS "Update orders" ON public.orders;
 CREATE POLICY "Update orders" ON public.orders FOR ALL USING (true) WITH CHECK (true);
 
+-- Policies for Founder Content
 DROP POLICY IF EXISTS "Public read founder_content" ON public.founder_content;
 CREATE POLICY "Public read founder_content" ON public.founder_content FOR SELECT USING (true);
-DROP POLICY IF EXISTS "Admins write founder_content" ON public.founder_content FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Admins write founder_content" ON public.founder_content;
+CREATE POLICY "Admins write founder_content" ON public.founder_content FOR ALL USING (true) WITH CHECK (true);
+
+-- Policies for Site Settings
 DROP POLICY IF EXISTS "Public read site_settings" ON public.site_settings;
 CREATE POLICY "Public read site_settings" ON public.site_settings FOR SELECT USING (true);
-DROP POLICY IF EXISTS "Admins write site_settings" ON public.site_settings FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Admins write site_settings" ON public.site_settings;
+CREATE POLICY "Admins write site_settings" ON public.site_settings FOR ALL USING (true) WITH CHECK (true);
+
+-- Policies for Profiles
 DROP POLICY IF EXISTS "Users read own profile" ON public.profiles;
 CREATE POLICY "Users read own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
+
 DROP POLICY IF EXISTS "Users update own profile" ON public.profiles;
 CREATE POLICY "Users update own profile" ON public.profiles FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
