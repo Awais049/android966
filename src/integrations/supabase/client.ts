@@ -27,11 +27,26 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 }
 
 
+if (typeof globalThis.WebSocket === 'undefined') {
+  globalThis.WebSocket = class DummyWebSocket {} as any;
+}
+
+export const LIVE_SUPABASE_URL = "https://tztgtdyyrgxmbzkomlkh.supabase.co";
+export const LIVE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6dGd0ZHl5cmd4bWJ6a29tbGtoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3MDk3MjYsImV4cCI6MjEwNzI4NTcyNn0.ufY7_dlHuLZIsqQcFpWlDGH7wl6oiJFtpL2AaJnU_Sc";
+
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://placeholder-project.supabase.co";
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || "placeholder-publishable-key";
+  const SUPABASE_URL =
+    import.meta.env.VITE_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    LIVE_SUPABASE_URL;
+  const SUPABASE_PUBLISHABLE_KEY =
+    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    import.meta.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    LIVE_SUPABASE_ANON_KEY;
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     global: {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
-import { getLocalUserSession } from "@/lib/authLocal";
+import { getLocalUserSession, setLocalUserSession } from "@/lib/authLocal";
 
 export type AdminAuthState = {
   loading: boolean;
