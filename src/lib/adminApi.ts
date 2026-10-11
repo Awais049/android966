@@ -20,11 +20,15 @@ export type ProductRow = {
   reviews: number | null;
   badge: string | null;
   image: string | null;
+  images?: string[] | null;
+  image2?: string | null;
+  image3?: string | null;
+  image4?: string | null;
   description: string | null;
   in_stock: boolean;
   sku: string | null;
   variants: ProductVariantRow[] | null;
-  specs: Record<string, string> | null;
+  specs: Record<string, any> | null;
   tags: string[] | null;
   created_at: string;
   updated_at: string;

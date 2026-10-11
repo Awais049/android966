@@ -77,6 +77,10 @@ CREATE TABLE IF NOT EXISTS public.products (
   reviews integer DEFAULT 0,
   badge text,
   image text,
+  images text[] NOT NULL DEFAULT '{}'::text[],
+  image2 text,
+  image3 text,
+  image4 text,
   description text,
   in_stock boolean NOT NULL DEFAULT true,
   sku text,
@@ -86,6 +90,12 @@ CREATE TABLE IF NOT EXISTS public.products (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Safe migration helper for existing databases:
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS images text[] DEFAULT '{}'::text[];
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS image2 text;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS image3 text;
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS image4 text;
 
 -- ----------------------------------------------------
 -- 4. SERVICES

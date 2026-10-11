@@ -101,6 +101,27 @@ function ProductDetailPage() {
   };
 
 
+  const galleryImages: string[] = (() => {
+    const rawSpecs = (product.specs && typeof product.specs === "object" ? product.specs : {}) as Record<string, any>;
+    const specsImages: string[] = Array.isArray(rawSpecs.images) ? rawSpecs.images : [];
+    const prodImages: string[] = Array.isArray(product.images) ? product.images : [];
+    const list = [
+      product.image,
+      product.image2,
+      rawSpecs.image2,
+      ...prodImages,
+      ...specsImages,
+      product.image3,
+      rawSpecs.image3,
+      product.image4,
+      rawSpecs.image4,
+    ].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    const unique = Array.from(new Set(list));
+    return unique.length > 0 ? unique : [product.image];
+  })();
+
+  const currentHeroImage = galleryImages[activeImage] || galleryImages[0] || product.image;
+
   return (
     <div className="bg-white py-8">
       <div className="a9-container">
@@ -116,34 +137,42 @@ function ProductDetailPage() {
         <div className="mt-6 grid gap-8 lg:grid-cols-2">
           {/* Image gallery */}
           <div>
-            <div className="overflow-hidden rounded-xl border border-border" style={{ backgroundColor: product.bgColor }}>
+            <div
+              className="overflow-hidden rounded-xl border border-border bg-slate-50 transition-all duration-200"
+              style={{ backgroundColor: product.bgColor }}
+            >
               <img
-                src={product.image}
+                src={currentHeroImage}
                 alt={`${product.name} — Buy online in Pakistan at Android 966`}
-                className="h-[300px] sm:h-[400px] w-full object-cover"
+                className="h-[300px] sm:h-[400px] w-full object-cover transition-all duration-200"
                 loading="eager"
               />
             </div>
-            <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
-              {Array.from({ length: 4 }).map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setActiveImage(idx)}
-                  className={`h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 transition-colors ${
-                    activeImage === idx ? "border-brand" : "border-border"
-                  }`}
-                  style={{ backgroundColor: product.bgColor }}
-                  aria-label={`View photo ${idx + 1} of ${product.name}`}
-                >
-                  <img
-                    src={product.image}
-                    alt={`${product.name} photo preview ${idx + 1}`}
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                  />
-                </button>
-              ))}
-            </div>
+            {galleryImages.length > 1 && (
+              <div className="mt-3 flex gap-3 overflow-x-auto pb-1">
+                {galleryImages.map((imgSrc, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setActiveImage(idx)}
+                    className={`h-16 w-16 shrink-0 overflow-hidden rounded-xl border-2 transition-all cursor-pointer ${
+                      activeImage === idx
+                        ? "border-brand ring-2 ring-brand/30 shadow-sm scale-105"
+                        : "border-border hover:border-slate-400 opacity-75 hover:opacity-100"
+                    }`}
+                    style={{ backgroundColor: product.bgColor }}
+                    aria-label={`View photo ${idx + 1} of ${product.name}`}
+                  >
+                    <img
+                      src={imgSrc}
+                      alt={`${product.name} photo preview ${idx + 1}`}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Product info */}

@@ -30,6 +30,11 @@ export function getDefaultProducts(): ProductRow[] {
         }))
       : [];
 
+    const gallery = [p.image, p.image2, ...(p.images ?? []), p.image3, p.image4].filter(
+      (x): x is string => typeof x === "string" && x.trim().length > 0,
+    );
+    const uniqueGallery = Array.from(new Set(gallery));
+
     return {
       id: p.id,
       slug: p.id,
@@ -41,12 +46,22 @@ export function getDefaultProducts(): ProductRow[] {
       rating: p.rating ?? 5,
       reviews: p.reviews ?? 0,
       badge: p.badge || null,
-      image: p.image,
+      image: uniqueGallery[0] || p.image,
+      images: uniqueGallery,
+      image2: p.image2 ?? uniqueGallery[1] ?? null,
+      image3: p.image3 ?? uniqueGallery[2] ?? null,
+      image4: p.image4 ?? uniqueGallery[3] ?? null,
       description: p.description || null,
       in_stock: p.inStock !== false,
       sku: p.sku || "",
       variants,
-      specs: p.specs ?? {},
+      specs: {
+        ...(p.specs ?? {}),
+        images: uniqueGallery,
+        image2: p.image2 ?? uniqueGallery[1] ?? null,
+        image3: p.image3 ?? uniqueGallery[2] ?? null,
+        image4: p.image4 ?? uniqueGallery[3] ?? null,
+      },
       tags: p.tags ?? [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

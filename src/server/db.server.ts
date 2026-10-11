@@ -72,6 +72,10 @@ const PRODUCT_COLUMNS = new Set([
   "reviews",
   "badge",
   "image",
+  "images",
+  "image2",
+  "image3",
+  "image4",
   "description",
   "in_stock",
   "sku",
@@ -82,7 +86,87 @@ const PRODUCT_COLUMNS = new Set([
   "updated_at",
 ]);
 
-export function sanitizeProductPayload(payload: any): Record<string, any> {
+// Tracks any column that is missing from PostgREST schema cache to prevent PGRST204 errors
+export const unsupportedProductColumns = new Set<string>();
+
+export function isSchemaColumnCacheError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || "").toLowerCase();
+  const code = String(err.code || "");
+  return code === "PGRST204" || (msg.includes("could not find the") && msg.includes("column"));
+}
+
+export function extractMissingColumnName(err: any): string | null {
+  if (!err) return null;
+  const msg = String(err.message || "");
+  const match = msg.match(/Could not find the '([^']+)' column/i);
+  return match ? match[1] : null;
+}
+
+// Proactively check Supabase products columns on startup so we don't send columns that are not yet provisioned
+let productSchemaChecked = false;
+export async function checkProductSchemaCache(): Promise<void> {
+  if (productSchemaChecked) return;
+  try {
+    const client = supabaseAdmin as any;
+    if (client?.from) {
+      const { data, error } = await client.from("products").select("*").limit(1);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        productSchemaChecked = true;
+        const availableCols = new Set(Object.keys(data[0]));
+        for (const col of ["images", "image2", "image3", "image4"]) {
+          if (!availableCols.has(col)) {
+            unsupportedProductColumns.add(col);
+          } else {
+            unsupportedProductColumns.delete(col);
+          }
+        }
+      }
+    }
+  } catch {}
+}
+checkProductSchemaCache().catch(() => {});
+
+export function normalizeProductRow(item: any): any {
+  if (!item || typeof item !== "object") return item;
+  const rawSpecs = (item.specs && typeof item.specs === "object" ? item.specs : {}) as Record<string, any>;
+  const specsImages: string[] = Array.isArray(rawSpecs.images) ? rawSpecs.images : [];
+  const itemImages: string[] = Array.isArray(item.images) ? item.images : [];
+  const list = [
+    item.image,
+    item.image2,
+    rawSpecs.image2,
+    ...itemImages,
+    ...specsImages,
+    item.image3,
+    rawSpecs.image3,
+    item.image4,
+    rawSpecs.image4,
+  ].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  const unique = Array.from(new Set(list));
+  const mainImage = unique[0] || item.image || "";
+
+  return {
+    ...item,
+    image: mainImage,
+    images: unique.length > 0 ? unique : mainImage ? [mainImage] : [],
+    image2: item.image2 || rawSpecs.image2 || unique[1] || null,
+    image3: item.image3 || rawSpecs.image3 || unique[2] || null,
+    image4: item.image4 || rawSpecs.image4 || unique[3] || null,
+    specs: {
+      ...rawSpecs,
+      images: unique,
+      image2: item.image2 || rawSpecs.image2 || unique[1] || null,
+      image3: item.image3 || rawSpecs.image3 || unique[2] || null,
+      image4: item.image4 || rawSpecs.image4 || unique[3] || null,
+    },
+  };
+}
+
+export function sanitizeProductPayload(
+  payload: any,
+  options?: { excludeColumns?: Set<string> },
+): Record<string, any> {
   if (!payload || typeof payload !== "object") return payload;
   const clean: Record<string, any> = {};
 
@@ -103,18 +187,85 @@ export function sanitizeProductPayload(payload: any): Record<string, any> {
     clean.original_price = payload.originalPrice === null ? null : Number(payload.originalPrice);
   }
 
-  // 3. Copy other valid schema columns only (filters out inStock, originalPrice, emoji, bgColor, etc.)
+  // 3. Extract, normalize, and deduplicate all gallery images
+  const rawSpecs =
+    payload.specs && typeof payload.specs === "object" && !Array.isArray(payload.specs)
+      ? { ...payload.specs }
+      : {};
+  const specsImages: string[] = Array.isArray(rawSpecs.images) ? rawSpecs.images : [];
+  const payloadImages: string[] = Array.isArray(payload.images)
+    ? payload.images
+    : typeof payload.images === "string"
+      ? (() => {
+          try {
+            const parsed = JSON.parse(payload.images);
+            return Array.isArray(parsed) ? parsed : [payload.images];
+          } catch {
+            return [payload.images];
+          }
+        })()
+      : [];
+
+  const rawList = [
+    payload.image,
+    payload.image2,
+    rawSpecs.image2,
+    ...payloadImages,
+    ...specsImages,
+    payload.image3,
+    rawSpecs.image3,
+    payload.image4,
+    rawSpecs.image4,
+  ].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  const gallery = Array.from(new Set(rawList));
+
+  // Store gallery in specs JSONB so it ALWAYS persists safely
+  const updatedSpecs = {
+    ...rawSpecs,
+    images: gallery,
+    image2: gallery[1] || null,
+    image3: gallery[2] || null,
+    image4: gallery[3] || null,
+  };
+  clean.specs = updatedSpecs;
+
+  // Set primary hero image
+  clean.image = gallery[0] || (typeof payload.image === "string" ? payload.image : null);
+
+  const excluded = options?.excludeColumns || unsupportedProductColumns;
+
+  // Set top-level image columns if supported by table schema cache
+  if (!excluded.has("images")) {
+    clean.images = gallery;
+  }
+  if (!excluded.has("image2")) {
+    clean.image2 = gallery[1] || (payload.image2 ? String(payload.image2) : null);
+  }
+  if (!excluded.has("image3")) {
+    clean.image3 = gallery[2] || (payload.image3 ? String(payload.image3) : null);
+  }
+  if (!excluded.has("image4")) {
+    clean.image4 = gallery[3] || (payload.image4 ? String(payload.image4) : null);
+  }
+
+  // 4. Copy other valid schema columns only (filters out inStock, originalPrice, emoji, bgColor, etc.)
   for (const [key, value] of Object.entries(payload)) {
     if (
       key === "inStock" ||
       key === "originalPrice" ||
       key === "in_stock" ||
       key === "price" ||
-      key === "original_price"
+      key === "original_price" ||
+      key === "image" ||
+      key === "images" ||
+      key === "image2" ||
+      key === "image3" ||
+      key === "image4" ||
+      key === "specs"
     ) {
       continue;
     }
-    if (PRODUCT_COLUMNS.has(key)) {
+    if (PRODUCT_COLUMNS.has(key) && !excluded.has(key)) {
       clean[key] = value;
     }
   }
@@ -300,6 +451,12 @@ export async function executeServerQuery(
           finalData = await autoSeedIfEmpty(table, finalData);
         }
 
+        if (table === "products" && finalData != null) {
+          finalData = Array.isArray(finalData)
+            ? finalData.map(normalizeProductRow)
+            : normalizeProductRow(finalData);
+        }
+
         if (Array.isArray(finalData)) {
           globalDb[table] = finalData;
         }
@@ -399,6 +556,10 @@ export async function executeServerQuery(
     }
   }
 
+  if (table === "products" && Array.isArray(items)) {
+    items = items.map(normalizeProductRow);
+  }
+
   if (params.isSingle || params.isMaybeSingle) {
     return { data: items[0] ?? null, count: totalCount, error: null };
   }
@@ -467,10 +628,29 @@ export async function executeServerMutation(
       // DIRECT OPERATION ON SUPABASE
       try {
         if (client?.from) {
-          const { data: sbData, error: sbError } = await client
+          let { data: sbData, error: sbError } = await client
             .from(table)
             .insert(inserted)
             .select();
+
+          if (sbError && isSchemaColumnCacheError(sbError)) {
+            const missingCol = extractMissingColumnName(sbError);
+            if (missingCol) {
+              unsupportedProductColumns.add(missingCol);
+              console.warn(
+                `[ServerDB] Schema cache notice: column "${missingCol}" missing on ${table}. Retrying insert without it.`,
+              );
+              const retryInserted = inserted.map((rec: any) => {
+                const copy = { ...rec };
+                delete copy[missingCol];
+                return copy;
+              });
+              const retryRes = await client.from(table).insert(retryInserted).select();
+              sbData = retryRes.data;
+              sbError = retryRes.error;
+            }
+          }
+
           if (!sbError && sbData) {
             const current = globalDb[table] || [];
             const resultData = Array.isArray(params.payload) ? sbData : sbData[0];
@@ -526,6 +706,30 @@ export async function executeServerMutation(
 
           let { data: sbData, error: sbError } = await q.select();
 
+          // Handle PostgREST missing column schema cache error
+          if (sbError && isSchemaColumnCacheError(sbError)) {
+            const missingCol = extractMissingColumnName(sbError);
+            if (missingCol) {
+              unsupportedProductColumns.add(missingCol);
+              console.warn(
+                `[ServerDB] Schema cache notice: column "${missingCol}" missing on ${table}. Retrying update without it.`,
+              );
+              delete updateData[missingCol];
+              let retryQ = client.from(table).update(updateData);
+              if (targetId) {
+                retryQ = retryQ.eq("id", targetId);
+              } else if (filters.length > 0) {
+                for (const f of filters) {
+                  if (f.op === "eq") retryQ = retryQ.eq(f.column, f.value);
+                  if (f.op === "neq") retryQ = retryQ.neq(f.column, f.value);
+                }
+              }
+              const retryRes = await retryQ.select();
+              sbData = retryRes.data;
+              sbError = retryRes.error;
+            }
+          }
+
           // If updating by ID matched 0 rows, try matching by slug as fallback
           if (!sbError && targetId && Array.isArray(sbData) && sbData.length === 0) {
             const slugRes = await client.from(table).update(updateData).eq("slug", targetId).select();
@@ -537,8 +741,9 @@ export async function executeServerMutation(
           }
 
           if (!sbError && sbData && sbData.length > 0) {
+            const normalizedSbData = table === "products" ? sbData.map(normalizeProductRow) : sbData;
             const current = globalDb[table] || [];
-            const updatedRows = Array.isArray(sbData) ? sbData : [sbData];
+            const updatedRows = Array.isArray(normalizedSbData) ? normalizedSbData : [normalizedSbData];
             const updatedMap = new Map(updatedRows.map((r: any) => [String(r.id || r.slug), r]));
             const next = current.map((item: any) => {
               const k = String(item.id || item.slug);
@@ -547,7 +752,7 @@ export async function executeServerMutation(
             globalDb[table] = next;
             writeServerTable(table, next);
             console.log(`[ServerDB] Successfully updated ${table} ID: ${targetId}, in_stock:`, updateData.in_stock);
-            return { data: sbData, error: null };
+            return { data: normalizedSbData, error: null };
           }
 
           if (sbError) {
@@ -682,13 +887,33 @@ export async function executeServerMutation(
       // DIRECT OPERATION ON SUPABASE
       try {
         if (client?.from) {
-          const { data: sbData, error: sbError } = await client
+          let { data: sbData, error: sbError } = await client
             .from(table)
             .upsert(records, params.upsertOptions)
             .select();
+
+          if (sbError && isSchemaColumnCacheError(sbError)) {
+            const missingCol = extractMissingColumnName(sbError);
+            if (missingCol) {
+              unsupportedProductColumns.add(missingCol);
+              console.warn(
+                `[ServerDB] Schema cache notice: column "${missingCol}" missing on ${table}. Retrying upsert without it.`,
+              );
+              const retryRecords = records.map((rec: any) => {
+                const copy = { ...rec };
+                delete copy[missingCol];
+                return copy;
+              });
+              const retryRes = await client.from(table).upsert(retryRecords, params.upsertOptions).select();
+              sbData = retryRes.data;
+              sbError = retryRes.error;
+            }
+          }
+
           if (!sbError && sbData) {
+            const normalizedSbData = table === "products" ? sbData.map(normalizeProductRow) : sbData;
             const current = globalDb[table] || [];
-            const upsertedList = Array.isArray(sbData) ? sbData : [sbData];
+            const upsertedList = Array.isArray(normalizedSbData) ? normalizedSbData : [normalizedSbData];
             const map = new Map(upsertedList.map((r: any) => [String(r[conflictKey] || r.id || r.slug), r]));
             const next = current.map((item: any) => {
               const k = String(item[conflictKey] || item.id || item.slug);
@@ -701,7 +926,7 @@ export async function executeServerMutation(
             }
             globalDb[table] = next;
             writeServerTable(table, next);
-            return { data: sbData, error: null };
+            return { data: normalizedSbData, error: null };
           }
           if (sbError) {
             console.error(`[ServerDB SQL Upsert Error on ${table}]:`, sbError);

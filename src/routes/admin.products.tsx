@@ -21,6 +21,10 @@ const empty: Partial<ProductRow> = {
   reviews: 0,
   badge: "",
   image: "",
+  images: [],
+  image2: "",
+  image3: "",
+  image4: "",
   description: "",
   in_stock: true,
   sku: "",
@@ -239,8 +243,33 @@ function AdminProducts() {
                 return (
                   <tr key={targetId}>
                     <td className="px-4 py-3">
-                      <p className="font-medium text-slate-900">{product.name}</p>
-                      <p className="text-xs text-slate-500">{product.slug}</p>
+                      <div className="flex items-center gap-3">
+                        {product.image ? (
+                          <img
+                            src={product.image}
+                            alt={product.name}
+                            className="h-10 w-10 shrink-0 rounded-lg object-cover border border-slate-200"
+                          />
+                        ) : (
+                          <div className="h-10 w-10 shrink-0 rounded-lg bg-slate-100 flex items-center justify-center text-xs text-slate-400">
+                            No img
+                          </div>
+                        )}
+                        <div>
+                          <p className="font-medium text-slate-900">{product.name}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">{product.slug}</span>
+                            {(() => {
+                              const extraCount = [product.image2, product.image3, product.image4].filter(Boolean).length;
+                              return extraCount > 0 ? (
+                                <span className="inline-flex items-center rounded-full bg-blue-50 px-1.5 py-0.2 text-[10px] font-medium text-blue-700">
+                                  +{extraCount} photos
+                                </span>
+                              ) : null;
+                            })()}
+                          </div>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-3 capitalize text-slate-600">{product.category}</td>
                     <td className="px-4 py-3 text-slate-900">
@@ -314,7 +343,32 @@ function EditModal({
   onSave: (v: Partial<ProductRow>) => void;
   saving: boolean;
 }) {
-  const [v, setV] = useState<Partial<ProductRow>>(value);
+  const [v, setV] = useState<Partial<ProductRow>>(() => {
+    const rawSpecs = (value.specs && typeof value.specs === "object" ? value.specs : {}) as Record<string, any>;
+    const specsImages: string[] = Array.isArray(rawSpecs.images) ? rawSpecs.images : [];
+    const valImages: string[] = Array.isArray(value.images) ? value.images : [];
+    const list = [
+      value.image,
+      value.image2,
+      rawSpecs.image2,
+      ...valImages,
+      ...specsImages,
+      value.image3,
+      rawSpecs.image3,
+      value.image4,
+      rawSpecs.image4,
+    ].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+    const unique = Array.from(new Set(list));
+
+    return {
+      ...value,
+      image: value.image || unique[0] || "",
+      image2: value.image2 || rawSpecs.image2 || unique[1] || "",
+      image3: value.image3 || rawSpecs.image3 || unique[2] || "",
+      image4: value.image4 || rawSpecs.image4 || unique[3] || "",
+      images: unique,
+    };
+  });
   const set = <K extends keyof ProductRow>(k: K, val: ProductRow[K]) => setV((p) => ({ ...p, [k]: val }));
 
   const variants: ProductVariantRow[] = Array.isArray(v.variants) ? v.variants : [];
@@ -325,6 +379,37 @@ function EditModal({
     setVariants(variants.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   const removeVariant = (i: number) => setVariants(variants.filter((_, idx) => idx !== i));
 
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const list = [v.image, v.image2, v.image3, v.image4].filter(
+      (x): x is string => typeof x === "string" && x.trim().length > 0,
+    );
+    const unique = Array.from(new Set(list));
+    const mainImg = unique[0] || v.image || "";
+    const img2 = v.image2 || unique[1] || null;
+    const img3 = v.image3 || unique[2] || null;
+    const img4 = v.image4 || unique[3] || null;
+
+    const rawSpecs = (v.specs && typeof v.specs === "object" ? v.specs : {}) as Record<string, any>;
+    const updatedSpecs = {
+      ...rawSpecs,
+      images: unique,
+      image2: img2,
+      image3: img3,
+      image4: img4,
+    };
+
+    onSave({
+      ...v,
+      image: mainImg,
+      images: unique,
+      image2: img2,
+      image3: img3,
+      image4: img4,
+      specs: updatedSpecs,
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-xl">
@@ -333,10 +418,7 @@ function EditModal({
           <button onClick={onClose}><X className="h-5 w-5 text-slate-500" /></button>
         </div>
         <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSave(v);
-          }}
+          onSubmit={handleFormSubmit}
           className="max-h-[70vh] space-y-4 overflow-y-auto p-6"
         >
           <Field label="Name">
@@ -380,7 +462,46 @@ function EditModal({
               </select>
             </Field>
           </div>
-          <ImagePicker label="Image" value={v.image ?? ""} onChange={(val) => set("image", val)} />
+
+          {/* 4 Image Slots: Main Image URL + 3 Gallery Image URLs */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Product Images & Gallery (Up to 4 images)</p>
+              <p className="text-xs text-slate-500">
+                Configure separate gallery images. The Main Image serves as the hero display, and Gallery Images 2, 3, and 4 populate interactive thumbnail preview boxes on the storefront.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <ImagePicker
+                  label="Main Image URL / Upload (Primary)"
+                  value={v.image ?? ""}
+                  onChange={(val) => set("image", val)}
+                />
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <ImagePicker
+                  label="Gallery Image 2 URL / Upload"
+                  value={v.image2 ?? ""}
+                  onChange={(val) => set("image2", val)}
+                />
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <ImagePicker
+                  label="Gallery Image 3 URL / Upload"
+                  value={v.image3 ?? ""}
+                  onChange={(val) => set("image3", val)}
+                />
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <ImagePicker
+                  label="Gallery Image 4 URL / Upload"
+                  value={v.image4 ?? ""}
+                  onChange={(val) => set("image4", val)}
+                />
+              </div>
+            </div>
+          </div>
           <Field label="SKU">
             <input className="input" value={v.sku ?? ""} onChange={(e) => set("sku", e.target.value)} />
           </Field>

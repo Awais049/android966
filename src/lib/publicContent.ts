@@ -21,6 +21,26 @@ export function rowToProduct(row: ProductRow): Product {
         inStock: v.in_stock ?? true,
       }))
     : undefined;
+  const rawSpecs = (row.specs && typeof row.specs === "object" ? row.specs : {}) as Record<string, any>;
+  const specsImages: string[] = Array.isArray(rawSpecs.images) ? rawSpecs.images : [];
+  const rowImages: string[] = Array.isArray(row.images) ? row.images : [];
+  const galleryList = [
+    row.image,
+    row.image2,
+    rawSpecs.image2,
+    ...rowImages,
+    ...specsImages,
+    row.image3,
+    rawSpecs.image3,
+    row.image4,
+    rawSpecs.image4,
+  ].filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+  const uniqueGallery = Array.from(new Set(galleryList));
+  const mainImage =
+    uniqueGallery[0] ||
+    row.image ||
+    "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=800&q=80";
+
   return {
     id: row.slug,
     name: row.name,
@@ -32,14 +52,19 @@ export function rowToProduct(row: ProductRow): Product {
     reviews: Number(row.reviews ?? 0),
     badge: (row.badge as Product["badge"]) || undefined,
     emoji: "🛍️",
-    image:
-      row.image ||
-      "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=800&q=80",
+    image: mainImage,
+    images: uniqueGallery.length > 0 ? uniqueGallery : [mainImage],
+    image2: row.image2 || rawSpecs.image2 || uniqueGallery[1] || undefined,
+    image3: row.image3 || rawSpecs.image3 || uniqueGallery[2] || undefined,
+    image4: row.image4 || rawSpecs.image4 || uniqueGallery[3] || undefined,
     bgColor: DEFAULT_BG,
     inStock: row.in_stock,
     sku: row.sku ?? "",
     description: row.description ?? "",
-    specs: (row.specs as Record<string, string>) ?? {},
+    specs: {
+      ...rawSpecs,
+      images: uniqueGallery,
+    },
     tags: row.tags ?? [],
     variants,
   };

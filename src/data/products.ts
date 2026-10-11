@@ -18,11 +18,15 @@ export interface Product {
   badge?: "New" | "Sale" | "Bestseller";
   emoji: string;
   image: string;
+  images?: string[];
+  image2?: string;
+  image3?: string;
+  image4?: string;
   bgColor: string;
   inStock: boolean;
   sku: string;
   description: string;
-  specs: Record<string, string>;
+  specs: Record<string, any>;
   tags: string[];
   variants?: ProductVariant[];
 }

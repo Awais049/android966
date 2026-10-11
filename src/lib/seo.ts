@@ -221,12 +221,18 @@ export function getProductSchema(product: {
   in_stock?: boolean | null;
   inStock?: boolean | null;
   sku?: string | null;
+  images?: string[] | null;
 }) {
+  const images = Array.isArray((product as any).images) && (product as any).images.length > 0
+    ? (product as any).images
+    : product.image
+      ? [product.image]
+      : [`${SITE_URL}/icon-512.png`];
   return {
     "@context": "https://schema.org",
     "@type": "Product",
     name: product.name,
-    image: product.image ? [product.image] : [`${SITE_URL}/icon-512.png`],
+    image: images,
     description: product.description || `${product.name} available at Android 966 store in Pakistan.`,
     sku: product.sku || product.id,
     brand: {
